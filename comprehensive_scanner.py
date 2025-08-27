@@ -8,10 +8,12 @@ import ssl
 import dns.resolver
 import threading
 import time
+from typing import Dict, List, Any, Optional
 from bs4 import BeautifulSoup
 from urllib.robotparser import RobotFileParser
 from vulnerability_db import VulnerabilityDatabase
 from advanced_attacks import AdvancedAttackModule
+from vps_vds_attacks import VPSVDSAttackModule
 import concurrent.futures
 
 class ComprehensiveScanner:
@@ -25,6 +27,9 @@ class ComprehensiveScanner:
         self.session.headers.update({
             'User-Agent': 'Comprehensive-Security-Scanner/2.0'
         })
+        # Set reasonable timeouts and disable SSL verification warnings
+        import urllib3
+        urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
         self.vulnerabilities = []
         self.security_headers = []
         self.open_ports = []
@@ -32,12 +37,16 @@ class ComprehensiveScanner:
         self.os_info = {}
         self.vuln_db = VulnerabilityDatabase()
         self.advanced_attacks = AdvancedAttackModule(self.target_url, self.session)
-        self.common_ports = [21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 993, 995, 1433, 1521, 3306, 3389, 5432, 5900, 8080, 8443]
+        self.vps_vds_attacks = None  # Initialize after port scan
+        self.common_ports = [21, 22, 23, 25, 53, 80, 110, 135, 139, 143, 443, 993, 995, 1433, 1521, 3306, 3389, 5432, 5900, 6379, 8080, 8443, 27017]
         
     def _normalize_url(self, target):
         """Normalize target to URL format"""
         if not target.startswith(('http://', 'https://')):
-            # Try HTTPS first, then HTTP
+            # For testhtml5.vulnweb.com, use HTTP as it doesn't support HTTPS
+            if 'vulnweb.com' in target or 'testphp.vulnweb.com' in target:
+                return f"http://{target}"
+            # Try HTTPS first for other targets, then HTTP
             return f"https://{target}"
         return target.rstrip('/')
     
@@ -59,27 +68,31 @@ class ComprehensiveScanner:
     def check_target_accessibility(self):
         """Enhanced target accessibility check"""
         try:
-            # Try HTTPS first
+            # Try the current URL first
             try:
-                response = self.session.get(self.target_url, timeout=10, verify=False)
+                response = self.session.get(self.target_url, timeout=15, verify=False)
+                print(f"Target response: {response.status_code}")
                 if response.status_code in [200, 301, 302, 403, 404]:
                     return True
-            except:
-                pass
+            except Exception as e:
+                print(f"Initial connection failed: {e}")
             
             # Try HTTP if HTTPS fails
             if self.target_url.startswith('https://'):
                 http_url = self.target_url.replace('https://', 'http://')
                 try:
-                    response = self.session.get(http_url, timeout=10)
+                    print(f"Trying HTTP fallback: {http_url}")
+                    response = self.session.get(http_url, timeout=15)
+                    print(f"HTTP response: {response.status_code}")
                     if response.status_code in [200, 301, 302, 403, 404]:
                         self.target_url = http_url
                         return True
-                except:
-                    pass
+                except Exception as e:
+                    print(f"HTTP fallback failed: {e}")
             
             return False
-        except Exception:
+        except Exception as e:
+            print(f"Accessibility check failed: {e}")
             return False
     
     def scan_ports(self):
@@ -112,6 +125,10 @@ class ComprehensiveScanner:
                     future.result()
                 except Exception:
                     pass
+        
+        # Initialize VPS/VDS attack module after port scanning
+        if self.target_ip and self.open_ports:
+            self.vps_vds_attacks = VPSVDSAttackModule(self.target_ip, self.open_ports)
     
     def _identify_service(self, port):
         """Identify service running on port"""
@@ -178,10 +195,14 @@ class ComprehensiveScanner:
             self.scan_idor()
             
             # Additional web vulnerability scans
-            self.scan_directory_traversal()
-            self.scan_file_inclusion()
-            self.scan_command_injection()
-            self.scan_authentication_bypass()
+            if hasattr(self, 'scan_directory_traversal'):
+                self.scan_directory_traversal()
+            if hasattr(self, 'scan_file_inclusion'):
+                self.scan_file_inclusion()
+            if hasattr(self, 'scan_command_injection'):
+                self.scan_command_injection()
+            if hasattr(self, 'scan_authentication_bypass'):
+                self.scan_authentication_bypass()
             self.scan_session_management()
             self.scan_csrf()
             self.scan_file_upload()
@@ -191,6 +212,9 @@ class ComprehensiveScanner:
             # Advanced attack techniques
             if aggressive:
                 self.run_advanced_attacks()
+                
+            # VPS/VDS specific attacks
+            self.run_vps_vds_attacks()
         except Exception as e:
             print(f"Error in web vulnerability scanning: {e}")
             pass
@@ -1031,6 +1055,90 @@ class ComprehensiveScanner:
         except Exception:
             pass
     
+    def run_vps_vds_attacks(self):
+        """Execute VPS/VDS specific attacks including brute forcing"""
+        if not self.vps_vds_attacks:
+            return {}
+        
+        try:
+            print("🎯 Executing VPS/VDS attacks...")
+            vps_results = self.vps_vds_attacks.execute_vps_vds_attacks()
+            
+            # Process VPS/VDS attack results
+            self._process_vps_vds_results(vps_results)
+            
+            return vps_results
+        except Exception as e:
+            print(f"Error in VPS/VDS attacks: {e}")
+            return {}
+    
+    def _process_vps_vds_results(self, results: Dict):
+        """Process VPS/VDS attack results into vulnerabilities"""
+        
+        # Process SSH attacks
+        for attack in results.get('ssh_attacks', []):
+            if attack['success']:
+                severity = 'Critical' if 'Brute Force' in attack['attack_type'] else 'High'
+                self._add_vulnerability(
+                    f"SSH {attack['attack_type']}",
+                    severity,
+                    f"SSH Service (Port 22)",
+                    attack['details'],
+                    attack.get('username', '') + ':' + attack.get('password', ''),
+                    'Implement strong authentication, disable root login, use key-based auth'
+                )
+        
+        # Process FTP attacks
+        for attack in results.get('ftp_attacks', []):
+            if attack['success']:
+                severity = 'Critical' if 'Brute Force' in attack['attack_type'] else 'Medium'
+                self._add_vulnerability(
+                    f"FTP {attack['attack_type']}",
+                    severity,
+                    f"FTP Service (Port 21)",
+                    attack['details'],
+                    attack.get('username', '') + ':' + attack.get('password', ''),
+                    'Disable anonymous FTP, use SFTP/FTPS, implement strong credentials'
+                )
+        
+        # Process database attacks
+        for attack in results.get('database_attacks', []):
+            if attack['success']:
+                self._add_vulnerability(
+                    f"Database {attack['attack_type']}",
+                    'Critical',
+                    f"Database Service",
+                    attack['details'],
+                    attack.get('username', '') + ':' + attack.get('password', ''),
+                    'Change default credentials, restrict network access, enable authentication'
+                )
+        
+        # Process Telnet attacks
+        for attack in results.get('telnet_attacks', []):
+            if attack['success'] or attack['attack_type'] == 'Insecure Protocol Detection':
+                severity = 'Critical' if 'Brute Force' in attack['attack_type'] else 'High'
+                self._add_vulnerability(
+                    f"Telnet {attack['attack_type']}",
+                    severity,
+                    f"Telnet Service (Port 23)",
+                    attack['details'],
+                    attack.get('username', '') + ':' + attack.get('password', ''),
+                    'Disable Telnet service, use SSH instead for secure remote access'
+                )
+        
+        # Process web service attacks
+        for attack in results.get('web_service_attacks', []):
+            if attack['success']:
+                severity = 'High' if 'Admin Panel' in attack['attack_type'] else 'Medium'
+                self._add_vulnerability(
+                    f"Web {attack['attack_type']}",
+                    severity,
+                    attack.get('url', 'Web Service'),
+                    attack['details'],
+                    attack.get('username', '') + ':' + attack.get('password', ''),
+                    'Secure admin interfaces, implement access controls, use strong authentication'
+                )
+    
     def run_advanced_attacks(self):
         """Execute advanced attack techniques"""
         try:
@@ -1475,6 +1583,141 @@ class ComprehensiveScanner:
     
     def scan_business_logic(self):
         """Scan for business logic vulnerabilities"""
+        # Test for price manipulation in forms
+        for form in self.forms:
+            for inp in form['inputs']:
+                if any(field in inp['name'].lower() for field in ['price', 'amount', 'cost', 'total']):
+                    try:
+                        form_data = {input_field['name']: input_field.get('value', 'test') for input_field in form['inputs']}
+                        
+                        # Test negative values
+                        form_data[inp['name']] = '-100'
+                        response = self.session.post(form['action'], data=form_data, timeout=5)
+                        
+                        if response.status_code == 200:
+                            self._add_vulnerability(
+                                'Business Logic - Price Manipulation',
+                                'High',
+                                form['action'],
+                                f'Form accepts negative values for {inp["name"]}',
+                                str(form_data),
+                                'Implement proper input validation for numeric fields'
+                            )
+                    except:
+                        continue
+    
+    def _check_mysql_vulnerabilities(self):
+        """Check MySQL-specific vulnerabilities"""
+        try:
+            # Test for default credentials
+            import pymysql
+            try:
+                connection = pymysql.connect(
+                    host=self.target_ip,
+                    user='root',
+                    password='',
+                    connect_timeout=5
+                )
+                connection.close()
+                
+                self._add_vulnerability(
+                    'MySQL Default Credentials',
+                    'Critical',
+                    'MySQL Service (Port 3306)',
+                    'MySQL server accessible with default root credentials',
+                    'root:(empty password)',
+                    'Change default MySQL credentials immediately'
+                )
+            except:
+                pass
+            
+            # Test common weak passwords
+            weak_passwords = ['password', '123456', 'admin', 'mysql', 'root']
+            for password in weak_passwords:
+                try:
+                    connection = pymysql.connect(
+                        host=self.target_ip,
+                        user='root',
+                        password=password,
+                        connect_timeout=3
+                    )
+                    connection.close()
+                    
+                    self._add_vulnerability(
+                        'MySQL Weak Credentials',
+                        'Critical',
+                        'MySQL Service (Port 3306)',
+                        f'MySQL server accessible with weak credentials',
+                        f'root:{password}',
+                        'Use strong, unique passwords for database accounts'
+                    )
+                    break
+                except:
+                    continue
+                    
+        except ImportError:
+            pass
+        except Exception:
+            pass
+    
+    def _check_postgresql_vulnerabilities(self):
+        """Check PostgreSQL-specific vulnerabilities"""
+        try:
+            import psycopg2
+            # Test for default credentials
+            try:
+                connection = psycopg2.connect(
+                    host=self.target_ip,
+                    user='postgres',
+                    password='',
+                    connect_timeout=5
+                )
+                connection.close()
+                
+                self._add_vulnerability(
+                    'PostgreSQL Default Credentials',
+                    'Critical',
+                    'PostgreSQL Service (Port 5432)',
+                    'PostgreSQL server accessible with default credentials',
+                    'postgres:(empty password)',
+                    'Change default PostgreSQL credentials immediately'
+                )
+            except:
+                pass
+        except ImportError:
+            pass
+        except Exception:
+            pass
+    
+    def _check_mssql_vulnerabilities(self):
+        """Check MSSQL-specific vulnerabilities"""
+        try:
+            # Test for default credentials
+            import pyodbc
+            try:
+                connection = pyodbc.connect(
+                    f'DRIVER={{SQL Server}};SERVER={self.target_ip};UID=sa;PWD=;',
+                    timeout=5
+                )
+                connection.close()
+                
+                self._add_vulnerability(
+                    'MSSQL Default Credentials',
+                    'Critical',
+                    'MSSQL Service (Port 1433)',
+                    'MSSQL server accessible with default sa credentials',
+                    'sa:(empty password)',
+                    'Change default MSSQL credentials immediately'
+                )
+            except:
+                pass
+        except ImportError:
+            pass
+        except Exception:
+            pass
+
+    def scan_business_logic_enhanced(self):
+        """Enhanced business logic vulnerability scanning"""
         # Test for price manipulation in forms
         for form in self.forms:
             for inp in form['inputs']:

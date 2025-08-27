@@ -374,3 +374,95 @@ class ReportGenerator:
             ])
         
         return recommendations
+import json
+import datetime
+from typing import Dict, Any
+
+class ReportGenerator:
+    """Generate various report formats for vulnerability scan results"""
+    
+    def __init__(self, scan_results: Dict[str, Any]):
+        self.scan_results = scan_results
+        
+    def generate_json_report(self) -> str:
+        """Generate JSON format report"""
+        report = {
+            'scan_info': {
+                'target_url': self.scan_results.get('target_url'),
+                'scan_timestamp': self.scan_results.get('scan_timestamp'),
+                'total_vulnerabilities': self.scan_results.get('total_vulnerabilities', 0)
+            },
+            'vulnerability_summary': {
+                'critical': self.scan_results.get('critical_severity', 0),
+                'high': self.scan_results.get('high_severity', 0),
+                'medium': self.scan_results.get('medium_severity', 0),
+                'low': self.scan_results.get('low_severity', 0),
+                'info': self.scan_results.get('info_severity', 0)
+            },
+            'vulnerabilities': self.scan_results.get('vulnerabilities', []),
+            'security_headers': self.scan_results.get('security_headers', []),
+            'infrastructure': {
+                'target_ip': self.scan_results.get('target_ip'),
+                'open_ports': self.scan_results.get('open_ports', []),
+                'services': self.scan_results.get('services', {})
+            }
+        }
+        
+        return json.dumps(report, indent=2, default=str)
+    
+    def generate_html_report(self) -> str:
+        """Generate HTML format report"""
+        vulnerabilities = self.scan_results.get('vulnerabilities', [])
+        target_url = self.scan_results.get('target_url', 'Unknown')
+        timestamp = datetime.datetime.fromtimestamp(
+            self.scan_results.get('scan_timestamp', 0)
+        ).strftime('%Y-%m-%d %H:%M:%S')
+        
+        html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Vulnerability Scan Report</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        .header {{ background-color: #f0f0f0; padding: 20px; border-radius: 5px; }}
+        .vulnerability {{ margin: 10px 0; padding: 15px; border-left: 4px solid #ccc; }}
+        .critical {{ border-left-color: #8b0000; background-color: #ffe6e6; }}
+        .high {{ border-left-color: #ff0000; background-color: #ffe6e6; }}
+        .medium {{ border-left-color: #ffa500; background-color: #fff4e6; }}
+        .low {{ border-left-color: #008000; background-color: #e6ffe6; }}
+        .info {{ border-left-color: #0000ff; background-color: #e6f3ff; }}
+        .payload {{ background-color: #f5f5f5; padding: 10px; font-family: monospace; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Vulnerability Scan Report</h1>
+        <p><strong>Target:</strong> {target_url}</p>
+        <p><strong>Scan Date:</strong> {timestamp}</p>
+        <p><strong>Total Vulnerabilities:</strong> {len(vulnerabilities)}</p>
+    </div>
+    
+    <h2>Vulnerabilities Found</h2>
+"""
+        
+        if not vulnerabilities:
+            html += "<p>No vulnerabilities detected.</p>"
+        else:
+            for vuln in vulnerabilities:
+                severity_class = vuln['severity'].lower()
+                html += f"""
+    <div class="vulnerability {severity_class}">
+        <h3>{vuln['type']} - {vuln['severity']} Severity</h3>
+        <p><strong>Location:</strong> {vuln['location']}</p>
+        <p><strong>Description:</strong> {vuln['description']}</p>
+        <div class="payload"><strong>Payload:</strong> {vuln.get('payload', 'N/A')}</div>
+        <p><strong>Prevention:</strong> {vuln['prevention']}</p>
+    </div>
+"""
+        
+        html += """
+</body>
+</html>
+"""
+        return html
