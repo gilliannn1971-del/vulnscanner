@@ -466,3 +466,96 @@ class ReportGenerator:
 </html>
 """
         return html
+import json
+import datetime
+from typing import Dict, List, Any
+
+class ReportGenerator:
+    """Generate vulnerability scan reports"""
+    
+    def __init__(self, results: Dict[str, Any]):
+        self.results = results
+    
+    def _format_timestamp(self, timestamp):
+        """Format timestamp safely handling both string and numeric formats"""
+        if isinstance(timestamp, str):
+            return timestamp
+        elif isinstance(timestamp, (int, float)):
+            return datetime.datetime.fromtimestamp(timestamp).isoformat()
+        else:
+            return datetime.datetime.now().isoformat()
+    
+    def generate_json_report(self) -> str:
+        """Generate JSON format report"""
+        report = {
+            'scan_info': {
+                'target_url': self.results.get('target_url', 'Unknown'),
+                'target_ip': self.results.get('target_ip', 'Unknown'),
+                'scan_timestamp': self._format_timestamp(self.results.get('scan_timestamp')),
+                'total_vulnerabilities': self.results.get('total_vulnerabilities', 0)
+            },
+            'vulnerabilities': self.results.get('vulnerabilities', []),
+            'security_headers': self.results.get('security_headers', []),
+            'open_ports': self.results.get('open_ports', []),
+            'services': self.results.get('services', {})
+        }
+        
+        return json.dumps(report, indent=2, ensure_ascii=False)
+    
+    def generate_html_report(self) -> str:
+        """Generate HTML format report"""
+        vulnerabilities = self.results.get('vulnerabilities', [])
+        
+        html_report = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Vulnerability Scan Report</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        .header {{ background-color: #f4f4f4; padding: 20px; border-radius: 5px; }}
+        .vulnerability {{ margin: 10px 0; padding: 15px; border-left: 4px solid #ddd; }}
+        .critical {{ border-left-color: #8B00FF; }}
+        .high {{ border-left-color: #FF0000; }}
+        .medium {{ border-left-color: #FFA500; }}
+        .low {{ border-left-color: #00FF00; }}
+        .summary {{ background-color: #f9f9f9; padding: 15px; margin: 20px 0; }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Vulnerability Scan Report</h1>
+        <p><strong>Target:</strong> {self.results.get('target_url', 'Unknown')}</p>
+        <p><strong>IP:</strong> {self.results.get('target_ip', 'Unknown')}</p>
+        <p><strong>Scan Date:</strong> {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+    </div>
+    
+    <div class="summary">
+        <h2>Summary</h2>
+        <p><strong>Total Vulnerabilities:</strong> {len(vulnerabilities)}</p>
+        <p><strong>Critical:</strong> {len([v for v in vulnerabilities if v['severity'] == 'Critical'])}</p>
+        <p><strong>High:</strong> {len([v for v in vulnerabilities if v['severity'] == 'High'])}</p>
+        <p><strong>Medium:</strong> {len([v for v in vulnerabilities if v['severity'] == 'Medium'])}</p>
+        <p><strong>Low:</strong> {len([v for v in vulnerabilities if v['severity'] == 'Low'])}</p>
+    </div>
+    
+    <h2>Vulnerabilities</h2>
+"""
+        
+        for vuln in vulnerabilities:
+            severity_class = vuln['severity'].lower()
+            html_report += f"""
+    <div class="vulnerability {severity_class}">
+        <h3>{vuln['type']} - {vuln['severity']}</h3>
+        <p><strong>Location:</strong> {vuln['location']}</p>
+        <p><strong>Description:</strong> {vuln['description']}</p>
+        <p><strong>Payload:</strong> <code>{vuln.get('payload', 'N/A')}</code></p>
+        <p><strong>Prevention:</strong> {vuln['prevention'][:200]}...</p>
+    </div>
+"""
+        
+        html_report += """
+</body>
+</html>
+"""
+        return html_report
