@@ -1,15 +1,23 @@
 
 import requests
-import dns.resolver
-import whois
 import socket
 import ssl
-import subprocess
 import re
-from urllib.parse import urlparse
-from typing import Dict, List, Any
 import json
 import time
+from urllib.parse import urlparse
+from typing import Dict, List, Any
+
+# Optional imports with fallbacks
+try:
+    import dns.resolver
+except ImportError:
+    dns = None
+
+try:
+    import whois
+except ImportError:
+    whois = None
 
 class OSINTGatherer:
     """OSINT information gathering module"""
@@ -54,6 +62,10 @@ class OSINTGatherer:
     
     def get_whois_info(self) -> None:
         """Get WHOIS information"""
+        if not whois:
+            self.results['whois_info'] = {'error': 'WHOIS module not available'}
+            return
+            
         try:
             domain_info = whois.whois(self.domain)
             self.results['whois_info'] = {
@@ -84,19 +96,35 @@ class OSINTGatherer:
         
         found_subdomains = []
         
-        for subdomain in common_subdomains:
-            try:
-                full_domain = f"{subdomain}.{self.domain}"
-                dns.resolver.resolve(full_domain, 'A')
-                found_subdomains.append(full_domain)
-                time.sleep(0.1)  # Rate limiting
-            except:
-                continue
+        if dns:
+            # Use DNS resolver if available
+            for subdomain in common_subdomains:
+                try:
+                    full_domain = f"{subdomain}.{self.domain}"
+                    dns.resolver.resolve(full_domain, 'A')
+                    found_subdomains.append(full_domain)
+                    time.sleep(0.1)  # Rate limiting
+                except:
+                    continue
+        else:
+            # Use socket-based method as fallback
+            for subdomain in common_subdomains:
+                try:
+                    full_domain = f"{subdomain}.{self.domain}"
+                    socket.gethostbyname(full_domain)
+                    found_subdomains.append(full_domain)
+                    time.sleep(0.1)  # Rate limiting
+                except:
+                    continue
         
         self.results['subdomains'] = found_subdomains
     
     def gather_dns_records(self) -> None:
         """Gather DNS records"""
+        if not dns:
+            self.results['dns_records'] = {'error': 'DNS resolver module not available'}
+            return
+            
         record_types = ['A', 'AAAA', 'MX', 'NS', 'TXT', 'CNAME', 'SOA']
         dns_records = {}
         

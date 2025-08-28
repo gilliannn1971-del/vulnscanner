@@ -20,6 +20,26 @@ st.set_page_config(
     layout="wide"
 )
 
+# Ensure server is accessible
+import socket
+def get_local_ip():
+    try:
+        # Connect to a remote server to get local IP
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("8.8.8.8", 80))
+            return s.getsockname()[0]
+    except:
+        return "0.0.0.0"
+
+local_ip = get_local_ip()
+
+# Display connection info
+if st.sidebar.button("ℹ️ Connection Info"):
+    st.sidebar.success(f"🌐 Panel running on: http://{local_ip}:8501")
+    st.sidebar.success("🌐 Also accessible via Replit webview")
+    st.sidebar.info("🤖 Telegram bot: Check @YourBotName on Telegram")
+    st.sidebar.info("💡 If panel not loading, try refreshing or check the console for errors")
+
 # Title and description
 st.title("🔍 Educational Vulnerability Scanner")
 st.markdown("""

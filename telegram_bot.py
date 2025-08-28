@@ -13,12 +13,24 @@ import os
 load_dotenv()
 
 try:
-    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, Document
+    # Import python-telegram-bot components with explicit paths
+    import telegram
+    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
     from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
     from telegram.constants import ParseMode
+
+    # Verify this is the correct telegram library
+    if not hasattr(telegram, '__version__'):
+        raise ImportError("Incorrect telegram module - missing __version__")
+
     TELEGRAM_AVAILABLE = True
+    print("✅ Telegram bot dependencies loaded successfully!")
+    print(f"✅ Using python-telegram-bot version: {telegram.__version__}")
+    print(f"✅ Telegram module path: {telegram.__file__}")
+
 except ImportError as e:
-    print(f"Telegram bot dependencies not available: {e}")
+    print(f"❌ Telegram bot dependencies not available: {e}")
+    print("❌ Please ensure python-telegram-bot is installed correctly")
     # Define dummy classes to prevent NameError
     class Update: pass
     class ContextTypes:
@@ -742,7 +754,7 @@ Tap buttons below to toggle settings:
 
                 await attack_message.edit_text(attack_summary)
             else:
-                await attack_message.edit_text("❌ Interactive attack engine not available")
+                await message.edit_text("❌ Interactive attack engine not available")
 
         except Exception as e:
             await attack_message.edit_text(f"❌ Interactive attacks failed: {str(e)}")

@@ -37,10 +37,21 @@ class AttackEngine:
             'extracted_data': [],
             'credentials_found': [],
             'shells_obtained': [],
-            'attack_details': []
+            'attack_details': [],
+            'privilege_escalations': [],
+            'lateral_movement': [],
+            'persistence_established': []
         }
 
-        self._log_attack("🚀 Starting automated attack sequence...", attack_results)
+        self._log_attack("🚀 Starting advanced automated attack sequence...", attack_results)
+        
+        # Advanced reconnaissance phase
+        self._log_attack("🔍 Phase 1: Advanced reconnaissance and fingerprinting...", attack_results)
+        self._perform_advanced_recon(attack_results)
+        
+        # Vulnerability chaining phase  
+        self._log_attack("⛓️ Phase 2: Vulnerability chaining and privilege escalation...", attack_results)
+        self._chain_vulnerabilities(attack_results)
 
         # Execute different attack methods automatically
         for vuln in self.vulnerabilities:
