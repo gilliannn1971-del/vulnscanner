@@ -723,13 +723,15 @@ Tap buttons below to toggle settings:
     async def run_interactive_attacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE, results: Dict, config: Dict):
         """Run interactive attacks on vulnerabilities"""
         attack_message = await update.message.reply_text(
-            "⚔️ **Starting Interactive Attacks**\n\nExecuting vulnerability exploits..."
+            "⚔️ **Starting Smart Exploit Engine**\n\nAnalyzing and exploiting vulnerabilities..."
         )
 
         try:
-            if AttackEngine:
-                attack_engine = AttackEngine(results['target_url'], results['vulnerabilities'])
-                attack_results = attack_engine.start_interactive_attacks()
+            # Use smart exploit engine instead
+            from smart_exploit_engine import SmartExploitEngine
+            
+            smart_engine = SmartExploitEngine(results['target_url'], results['vulnerabilities'])
+            attack_results = smart_engine.exploit_vulnerabilities()
 
                 # Store attack results for detailed view
                 self.attack_engine_results = attack_results

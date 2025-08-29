@@ -65,6 +65,7 @@ def start_streamlit():
             sys.executable, '-m', 'streamlit', 'run', 'app.py',
             '--server.address', '0.0.0.0',
             '--server.port', '5000',
+            '--server.allowRunOnSave', 'true',
             '--server.headless', 'true'
         ])
     except Exception as e:

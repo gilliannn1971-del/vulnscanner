@@ -1614,6 +1614,30 @@ and security controls in web applications.
         
         return unique_output
 
+    def _perform_advanced_recon(self, attack_results):
+        """Perform advanced reconnaissance and fingerprinting"""
+        self._log_attack("→ Gathering target information...", attack_results)
+        # Basic reconnaissance implementation
+        try:
+            if self.target_url:
+                response = self.session.get(self.target_url, timeout=10)
+                if response.status_code == 200:
+                    self._log_attack(f"✓ Target accessible: {response.status_code}", attack_results)
+                    attack_results['extracted_data'].append(f"Target response: {response.status_code}")
+        except Exception as e:
+            self._log_attack(f"⚠ Reconnaissance error: {str(e)}", attack_results)
+
+    def _chain_vulnerabilities(self, attack_results):
+        """Chain vulnerabilities for privilege escalation"""
+        self._log_attack("→ Analyzing vulnerability chains...", attack_results)
+        # Basic vulnerability chaining implementation
+        vuln_types = [vuln.get('type', '') for vuln in self.vulnerabilities]
+        if vuln_types:
+            self._log_attack(f"✓ Found {len(vuln_types)} vulnerability types for chaining", attack_results)
+            attack_results['attack_details'].append(f"Vulnerability types: {', '.join(vuln_types)}")
+        else:
+            self._log_attack("- No vulnerabilities available for chaining", attack_results)
+
     def _log_attack(self, message, attack_results):
         """Log attack messages to console output"""
         timestamp = datetime.datetime.now().strftime('%H:%M:%S')

@@ -162,7 +162,7 @@ with col2:
 
 
 # Main navigation
-tab1, tab2, tab3, tab4, tab5 = st.tabs(["🔍 Vulnerability Scanner", "⚔️ Attack Engine", "🛡️ Auto Remediation", "📊 Reports", "💀 Payload Generator"])
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["🔍 Vulnerability Scanner", "⚔️ Attack Engine", "🛡️ Auto Remediation", "📊 Reports", "💀 Payload Generator", "💾 Database Viewer"])
 
 # Payload Generator Tab (moved before scan results to be always accessible)
 with tab5:
@@ -291,7 +291,7 @@ with tab5:
         telegram_chat_id = st.text_input("Telegram Chat ID:", placeholder="123456789")
 
         # Check if 'result' is defined from the PDF generation
-        pdf_generation_successful = 'result' in locals() and result.get('success')
+        pdf_generation_successful = 'result' in locals() and isinstance(result, dict) and result.get('success', False)
 
         if st.button("📤 Send to Telegram", key="send_telegram_success") and pdf_generation_successful:
             st.info("📤 Sending payload to Telegram bot...")
@@ -334,6 +334,203 @@ with tab5:
 
     Users are responsible for ensuring compliance with applicable laws and regulations.
     """)
+
+# Database Viewer Tab
+with tab6:
+    st.header("💾 Database Viewer & Exploiter")
+    st.warning("⚠️ **LEGAL WARNING**: Only scan databases you own or have explicit permission to access!")
+    
+    try:
+        from database_viewer import DatabaseViewer
+        db_viewer = DatabaseViewer()
+        
+        # Database discovery section
+        st.subheader("🔍 Database Discovery")
+        
+        col1, col2 = st.columns([2, 1])
+        
+        with col1:
+            target_host = st.text_input(
+                "Target Host/IP",
+                placeholder="192.168.1.100",
+                help="Enter the IP address or hostname to scan for databases"
+            )
+        
+        with col2:
+            scan_ports = st.text_input(
+                "Ports to Scan",
+                value="3306,5432,27017,1433,1521,6379",
+                help="Comma-separated list of database ports"
+            )
+        
+        if st.button("🔍 Discover Databases", type="primary"):
+            if target_host:
+                ports = [int(p.strip()) for p in scan_ports.split(',') if p.strip().isdigit()]
+                
+                with st.spinner("Discovering database services..."):
+                    discovery_results = db_viewer.discover_databases(target_host, ports)
+                
+                st.success(f"✅ Discovery completed! Found {len(discovery_results['discovered_services'])} services")
+                
+                # Display discovered services
+                if discovery_results['discovered_services']:
+                    st.subheader("🛠️ Discovered Services")
+                    
+                    for service in discovery_results['discovered_services']:
+                        st.write(f"• **{service['service']}** on port {service['port']} - {service['status']}")
+                
+                # Display successful connections
+                if discovery_results['successful_connections']:
+                    st.subheader("✅ Successful Database Connections")
+                    
+                    for conn in discovery_results['successful_connections']:
+                        st.success(f"🎯 **{conn['service']}** at {conn['host']}:{conn['port']} - {conn['username']}:{conn['password']}")
+                        
+                        # Database operations for successful connections
+                        conn_key = f"{conn['host']}:{conn['port']}"
+                        
+                        col1, col2, col3 = st.columns(3)
+                        
+                        with col1:
+                            if st.button(f"📊 Get Info", key=f"info_{conn_key}"):
+                                db_info = db_viewer.get_database_info(conn_key)
+                                if db_info.get('success'):
+                                    st.json(db_info['databases'])
+                        
+                        with col2:
+                            if st.button(f"💾 Dump Database", key=f"dump_{conn_key}"):
+                                with st.spinner(f"Dumping {conn['service']} database..."):
+                                    dump_result = db_viewer.dump_database(conn_key)
+                                
+                                if dump_result.get('success'):
+                                    st.success(f"✅ Database dumped to {dump_result['dump_file']}")
+                                    st.write(f"📊 Tables dumped: {len(dump_result['tables_dumped'])}")
+                                    st.write(f"📈 Total records: {dump_result['total_records']}")
+                                    
+                                    # Download button for dump file
+                                    with open(dump_result['dump_file'], 'r') as f:
+                                        st.download_button(
+                                            label="📥 Download Database Dump",
+                                            data=f.read(),
+                                            file_name=f"database_dump_{int(time.time())}.json",
+                                            mime="application/json"
+                                        )
+                                else:
+                                    st.error(f"❌ Failed to dump database: {dump_result.get('error', 'Unknown error')}")
+                        
+                        with col3:
+                            if st.button(f"🗑️ Close Connection", key=f"close_{conn_key}"):
+                                db_viewer.close_connections()
+                                st.info("Connection closed")
+                
+                # Store results in session state for later use
+                st.session_state['db_discovery_results'] = discovery_results
+            else:
+                st.error("Please enter a target host/IP address")
+        
+        # Custom SQL execution section
+        if 'db_discovery_results' in st.session_state and st.session_state['db_discovery_results'].get('successful_connections'):
+            st.subheader("📝 Custom SQL Execution")
+            
+            # Connection selector
+            connections = st.session_state['db_discovery_results']['successful_connections']
+            conn_options = [f"{conn['service']} - {conn['host']}:{conn['port']}" for conn in connections]
+            
+            selected_conn = st.selectbox("Select Database Connection", conn_options)
+            
+            if selected_conn:
+                # Find the selected connection
+                selected_idx = conn_options.index(selected_conn)
+                conn_info = connections[selected_idx]
+                conn_key = f"{conn_info['host']}:{conn_info['port']}"
+                
+                # SQL query input
+                sql_query = st.text_area(
+                    "SQL Query",
+                    placeholder="SELECT * FROM users LIMIT 10;",
+                    height=100,
+                    help="Enter your SQL query. Be careful with destructive operations!"
+                )
+                
+                col1, col2 = st.columns([1, 3])
+                
+                with col1:
+                    if st.button("🚀 Execute Query"):
+                        if sql_query.strip():
+                            with st.spinner("Executing query..."):
+                                query_result = db_viewer.execute_query(conn_key, sql_query)
+                            
+                            if query_result.get('success'):
+                                if query_result.get('rows'):
+                                    st.success(f"✅ Query executed successfully! {query_result.get('row_count', 0)} rows returned")
+                                    
+                                    # Display results in a table
+                                    if query_result['rows']:
+                                        import pandas as pd
+                                        df = pd.DataFrame(query_result['rows'])
+                                        st.dataframe(df, use_container_width=True)
+                                        
+                                        # Download results
+                                        csv_data = df.to_csv(index=False)
+                                        st.download_button(
+                                            label="📥 Download Results (CSV)",
+                                            data=csv_data,
+                                            file_name=f"query_results_{int(time.time())}.csv",
+                                            mime="text/csv"
+                                        )
+                                else:
+                                    st.success(f"✅ {query_result.get('message', 'Query executed successfully')}")
+                            else:
+                                st.error(f"❌ Query failed: {query_result.get('error', 'Unknown error')}")
+                        else:
+                            st.warning("Please enter a SQL query")
+                
+                with col2:
+                    st.info("""
+                    **Example Queries:**
+                    ```sql
+                    SHOW TABLES;
+                    SELECT * FROM users LIMIT 5;
+                    DESCRIBE users;
+                    SELECT COUNT(*) FROM users;
+                    ```
+                    """)
+        
+        # Database bruteforce section
+        st.subheader("🔓 Database Credential Bruteforce")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            bf_host = st.text_input("Target Host", placeholder="192.168.1.100")
+        
+        with col2:
+            bf_port = st.number_input("Port", min_value=1, max_value=65535, value=3306)
+        
+        with col3:
+            bf_service = st.selectbox("Database Type", ["MySQL", "PostgreSQL", "MongoDB"])
+        
+        if st.button("🔓 Start Credential Bruteforce"):
+            if bf_host and bf_port:
+                with st.spinner(f"Bruteforcing {bf_service} credentials..."):
+                    bf_results = db_viewer._bruteforce_credentials(bf_host, bf_port, bf_service)
+                
+                st.write(f"**Attempts made:** {len(bf_results['attempts'])}")
+                
+                if bf_results['successful']:
+                    st.success(f"✅ Found {len(bf_results['successful'])} valid credential(s)!")
+                    
+                    for cred in bf_results['successful']:
+                        st.success(f"🎯 **{cred['service']}** - {cred['username']}:{cred['password']}")
+                else:
+                    st.warning("No valid credentials found with common passwords")
+            else:
+                st.error("Please enter host and port")
+    
+    except ImportError:
+        st.error("Database viewer module not available. Please check the installation.")
+    except Exception as e:
+        st.error(f"Database viewer error: {str(e)}")
 
 
 # Perform scanning
@@ -485,13 +682,11 @@ if st.session_state.vps_attacking and vps_target_ips:
         progress_bar.progress(10)
         time.sleep(1)
 
-        attack_engine = AttackEngine(None, []) # Initialize with dummy values for now
+        attack_engine = AttackEngine("", []) # Initialize with empty values for VPS attacks
 
-        # Dynamically add VPS/VDS attack capabilities if AttackEngine supports them
-        if hasattr(attack_engine, 'add_vps_vds_attack_capabilities'):
-            attack_engine.add_vps_vds_attack_capabilities()
-        else:
-            st.warning("AttackEngine does not have VPS/VDS attack capabilities. Skipping VPS/VDS attacks.")
+        # VPS/VDS attacks use a simplified approach
+        if not hasattr(attack_engine, 'start_interactive_attacks'):
+            st.warning("AttackEngine does not support VPS/VDS attacks. Skipping VPS/VDS attacks.")
             st.session_state.vps_attacking = False
             st.rerun()
 
