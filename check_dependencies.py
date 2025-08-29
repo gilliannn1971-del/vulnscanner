@@ -24,7 +24,6 @@ REQUIRED_MODULES = [
     'jwt',
     'pymongo',
     'pymysql',
-    'pyodbc',
     'whois',
     'redis',
     'trafilatura',
